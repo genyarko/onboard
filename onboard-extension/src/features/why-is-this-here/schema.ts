@@ -6,34 +6,21 @@ import { z } from 'zod';
  */
 
 export const WhyIsThisHereExplanationSchema = z.object({
-  // Brief summary of what the code does
-  summary: z.string().describe('Brief summary of what this code does'),
-  
-  // Business reason - WHY this code exists from a business perspective
-  businessReason: z.string().describe('The business reason or problem this code solves'),
-  
-  // Technical context - implementation details and technical decisions
-  technicalContext: z.string().describe('Technical context, implementation details, and architectural decisions'),
-  
-  // Related changes - connections to other parts of the codebase
+  summary: z.string().default('').describe('Brief summary of what this code does'),
+  businessReason: z.string().default('').describe('The business reason or problem this code solves'),
+  technicalContext: z.string().default('').describe('Technical context, implementation details, and architectural decisions'),
   relatedChanges: z.array(z.object({
-    description: z.string().describe('Description of the related change'),
-    location: z.string().optional().describe('File or location of the related change'),
-    commit: z.string().optional().describe('Related commit hash'),
-  })).optional().describe('Related changes in the codebase'),
-  
-  // Related commits from git history
+    description: z.string(),
+    location: z.string().optional(),
+    commit: z.string().optional(),
+  })).optional(),
   relatedCommits: z.array(z.object({
     hash: z.string(),
     message: z.string(),
-    relevance: z.string().describe('How this commit relates to the explanation'),
+    relevance: z.string(),
   })).optional(),
-  
-  // Confidence level
-  confidence: z.enum(['high', 'medium', 'low']).describe('Confidence level of the explanation'),
-  
-  // Additional notes
-  notes: z.string().optional().describe('Any additional notes or observations'),
+  confidence: z.enum(['high', 'medium', 'low']).default('medium'),
+  notes: z.string().optional(),
 });
 
 export type WhyIsThisHereExplanation = z.infer<typeof WhyIsThisHereExplanationSchema>;

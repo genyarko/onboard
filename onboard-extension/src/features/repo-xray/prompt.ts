@@ -10,6 +10,10 @@ export interface RepoContext {
   sampleFiles?: Record<string, string>; // file path -> content
   packageJson?: string;
   readme?: string;
+  // Pre-extracted source excerpts (path + line-numbered windows around interesting
+  // markers like comments, decorators, TODO/HACK). The weird-parts prompt uses this
+  // because the file tree alone forces the model to hallucinate.
+  sourceExcerpts?: string;
 }
 
 /**
@@ -44,20 +48,21 @@ Focus on files that are critical to understanding how the application starts and
 </task>
 
 <output_format>
-Return a JSON object matching this exact structure:
+CRITICAL: Return ONLY a valid JSON object. Do not include any markdown formatting, code blocks, or explanatory text.
+Return ONLY this JSON structure:
 {
   "entryPoints": [
     {
       "file": "path/to/file.py",
       "role": "main application entry point",
       "description": "Brief description of what this file does",
-      "importance": "critical" | "high" | "medium" | "low"
+      "importance": "critical"
     }
   ],
   "summary": "Brief summary of the application structure and how it initializes"
 }
 
-Ensure the JSON is valid and matches the schema exactly.
+IMPORTANT: Your response must start with { and end with }. No other text before or after.
 </output_format>`;
 }
 
@@ -103,7 +108,8 @@ Focus on understanding the separation of concerns and how different parts of the
 </task>
 
 <output_format>
-Return a JSON object matching this exact structure:
+CRITICAL: Return ONLY a valid JSON object. Do not include any markdown formatting, code blocks, or explanatory text.
+Return ONLY this JSON structure:
 {
   "layers": [
     {
@@ -117,7 +123,7 @@ Return a JSON object matching this exact structure:
   "keyPatterns": ["dependency injection", "middleware pattern", "repository pattern"]
 }
 
-Ensure the JSON is valid and matches the schema exactly.
+IMPORTANT: Your response must start with { and end with }. No other text before or after.
 </output_format>`;
 }
 
@@ -180,7 +186,8 @@ Focus on making this immediately useful for a new engineer joining the project.
 </task>
 
 <output_format>
-Return a JSON object matching this exact structure:
+CRITICAL: Return ONLY a valid JSON object. Do not include any markdown formatting, code blocks, or explanatory text.
+Return ONLY this JSON structure:
 {
   "architectureDiagram": "graph TD\\n    A[Entry] --> B[Routes]\\n    B --> C[Services]\\n    ...",
   "criticalPathNarrative": "## Critical Path\\n\\nWhen a request arrives...\\n\\n### Step 1: Routing\\n...",
@@ -194,11 +201,7 @@ Return a JSON object matching this exact structure:
   "technicalStack": ["FastAPI", "Pydantic", "SQLAlchemy", "pytest"]
 }
 
-Ensure:
-- Mermaid syntax is valid and will render correctly
-- Narrative is in markdown format with proper headings
-- Conventions are specific and actionable
-- JSON is valid and matches the schema exactly
+IMPORTANT: Your response must start with { and end with }. No other text before or after.
 </output_format>`;
 }
 
@@ -216,23 +219,29 @@ export function buildWeirdPartsPrompt(
     .map(conv => `- ${conv.category}: ${conv.rule}`)
     .join('\n');
 
+  const sourceSection = context.sourceExcerpts
+    ? `Source Excerpts (line-numbered windows around comments, decorators, and HACK/TODO markers — this is your primary evidence):
+${context.sourceExcerpts}
+`
+    : '';
+
   return `<role>
 You are a senior software architect conducting a code review to identify anomalies and technical debt.
 </role>
 
 <task>
-Analyze the codebase to find "weird parts" - code that contradicts the identified conventions or seems unusual.
-These could be:
-- Legacy code that doesn't follow current patterns
-- Workarounds for bugs or limitations
-- Non-obvious design decisions
-- Code that violates the established conventions
-- Unusual dependencies or coupling
+Find "weird parts" in this codebase — code-level oddities, not file-naming or directory-layout drift.
+Specifically look for these EXACT 5 categories:
+1. Vendored/copied code from another library (look for comments referencing upstream removal or backward compatibility)
+2. Hacks or workarounds (look for the words "hack", "workaround", "compatibility" in comments)
+3. Deprecated parameters or APIs that still work (look for @deprecated decorators, "deprecated in favor of" docstrings)
+4. Non-obvious behaviors driven by parameter count, type, or runtime state (e.g. changing behavior if there is more than one parameter)
+5. Nested context managers, double exit stacks, or other unusual control-flow patterns (e.g., AsyncExitStack)
 
 Repository: ${context.repositoryName}
 Path: ${context.repositoryPath}
 
-File Tree:
+${sourceSection}File Tree (for reference only — DO NOT invent weird parts from filenames alone):
 ${context.fileTree}
 
 Established Conventions:
@@ -244,42 +253,36 @@ ${dependencyGraph.layers.map(l => l.name).join(', ')}
 Key Patterns:
 ${dependencyGraph.keyPatterns.join(', ')}
 
-Your task:
-1. Scan the file structure for files that don't fit the established patterns
-2. Look for code that contradicts the documented conventions
-3. Identify unusual dependencies or architectural violations
-4. For each weird part found:
-   - Describe what makes it weird
-   - Hypothesize WHY it exists (historical reason, workaround, etc.)
-   - Note which convention it contradicts (if applicable)
-   - Assess severity (how much it deviates from normal patterns)
-5. Provide an overall assessment of code consistency
-
-Focus on finding 3-7 significant weird parts. Don't list minor style inconsistencies.
-Be constructive - these aren't necessarily "bad", just worth understanding.
+Rules:
+1. Every weird part you report MUST cite a specific file and line range that appears in the source excerpts above. Do not invent line numbers.
+2. Quote or closely paraphrase the comment/code that makes it weird — generic statements like "non-standard naming" are NOT acceptable.
+3. The "hypothesis" field should explain WHY the code exists, grounded in what the comments or code structure tell you.
+4. Skip stylistic nits (whitespace, naming) — focus on the categories listed above.
+5. **HARD CONSTRAINT — Limit Deprecation Noise.** Deprecation findings are low-signal. You MUST NOT include more than ONE finding related to a deprecated API or parameter. If you see multiple deprecations, pick only the most architecturally significant ONE and ignore the rest.
+6. **Diversification:** Ensure you actively search for and include findings from ALL other categories: vendored code (e.g. "copy of", "removed in upstream"), explicit hacks (e.g. "hack for compatibility"), non-obvious behaviors based on parameters (e.g. "More than one dependency could have the same field"), and unusual control flows (e.g. nested AsyncExitStacks).
+7. Aim for 7-10 substantive, *varied* weird parts. Quality over quantity.
 </task>
 
 <output_format>
-Return a JSON object matching this exact structure:
+CRITICAL: Return ONLY a valid JSON object. Do not include any markdown formatting, code blocks, or explanatory text.
+Return ONLY this JSON structure:
 {
+  "_reasoning": "Use this field to 'think out loud'. Systematically scan the source excerpts and list potential candidates for each of the required categories. Evaluate whether each candidate is truly an architectural oddity or just a generic deprecation. Once you have a diverse list, proceed to populate the weirdParts array.",
   "weirdParts": [
     {
-      "file": "path/to/weird_file.py",
-      "lineRange": "45-67",
-      "description": "This file uses camelCase instead of snake_case",
-      "hypothesis": "Likely legacy code from before the project standardized on snake_case",
-      "contradicts": "naming convention for functions",
-      "severity": "medium"
+      "file": "src/some_module.py",
+      "lineRange": "12-34",
+      "description": "Quote or closely paraphrase the comment/code that makes this weird, naming the specific construct",
+      "hypothesis": "Why this exists, grounded in what the comments or code structure say",
+      "contradicts": "Which convention or expectation this violates",
+      "severity": "medium",
+      "category": "Vendored Code"
     }
   ],
   "summary": "Overall assessment of code consistency and technical debt"
 }
 
-Ensure:
-- Focus on significant deviations, not minor style issues
-- Hypotheses are thoughtful and plausible
-- Severity ratings are justified
-- JSON is valid and matches the schema exactly
+IMPORTANT: Your response must start with { and end with }. No other text before or after.
 </output_format>`;
 }
 
@@ -290,10 +293,11 @@ Ensure:
 export function buildRepoContext(
   repositoryPath: string,
   fileTree: string,
-  additionalFiles?: Record<string, string>
+  additionalFiles?: Record<string, string>,
+  sourceExcerpts?: string
 ): RepoContext {
   const repositoryName = repositoryPath.split(/[/\\]/).pop() || 'unknown';
-  
+
   return {
     repositoryPath,
     repositoryName,
@@ -301,5 +305,6 @@ export function buildRepoContext(
     sampleFiles: additionalFiles,
     packageJson: additionalFiles?.['package.json'],
     readme: additionalFiles?.['README.md'],
+    sourceExcerpts,
   };
 }

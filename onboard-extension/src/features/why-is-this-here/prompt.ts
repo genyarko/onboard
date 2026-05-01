@@ -169,13 +169,16 @@ ${surroundingCode}
   }
 
   prompt += `## Task
-Git history is not available for this line. Based on the code context alone, please provide:
+Git history is not available. Infer purpose from the code alone and respond with this JSON structure:
+{
+  "summary": "Brief summary of what this code does",
+  "businessReason": "Likely business reason or problem this code solves (inferred from code)",
+  "technicalContext": "Technical decisions and implementation details visible in surrounding code",
+  "confidence": "low",
+  "notes": "Note that this analysis is based on code only — no git history was available."
+}
 
-1. **What does this line do?** Explain its purpose in the code.
-2. **Why might it be needed?** Infer the likely reason based on the surrounding code.
-3. **Any potential concerns?** Identify possible issues or improvements.
-
-Please provide a helpful explanation based on code analysis.
+Set confidence to "low" — without history, conclusions are inferred. Focus on WHY, not just WHAT.
 `;
 
   return prompt;

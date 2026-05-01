@@ -1,0 +1,92 @@
+[
+  {
+    "file": "fastapi/routing.py",
+    "line_number": 633,
+    "code": "await anyio.sleep(0)",
+    "context": "Inside async generator for streaming JSONL responses",
+    "explanation": "This line allows for proper cancellation of streaming responses. Without an await point in the async generator loop, the event loop cannot process cancellation requests, causing streams to continue even after client disconnection. This was added to fix issue #14680 where streaming responses would block instead of yielding control back to the event loop.",
+    "source": "https://github.com/fastapi/fastapi/issues/14680",
+    "why_it_matters": "Critical for resource management - without this, cancelled streaming requests continue consuming server resources and network bandwidth even after the client has disconnected."
+  },
+  {
+    "file": "fastapi/routing.py",
+    "line_number": 226,
+    "code": "class _DefaultLifespan:",
+    "context": "Default lifespan context manager class definition",
+    "explanation": "This is a complete copy of Starlette's _DefaultLifespan class that was removed from Starlette. FastAPI maintains this copy to preserve backward compatibility with the deprecated on_startup and on_shutdown event handlers, allowing existing applications to continue working while users migrate to the newer lifespan context manager pattern.",
+    "source": "https://github.com/Kludex/starlette/pull/3117",
+    "why_it_matters": "Demonstrates FastAPI's commitment to backward compatibility - rather than breaking existing applications, they vendor the removed code to give users time to migrate."
+  },
+  {
+    "file": "fastapi/routing.py",
+    "line_number": 116,
+    "code": "async with AsyncExitStack() as request_stack:",
+    "context": "Inside request_response wrapper function",
+    "explanation": "FastAPI uses nested AsyncExitStack contexts to manage the lifecycle of dependencies with yield. The outer 'request_stack' (fastapi_inner_astack) handles dependency cleanup, while the inner 'function_stack' (fastapi_function_astack) manages the endpoint function execution. This separation allows proper cleanup even when exceptions occur, and enables streaming responses while maintaining compatibility with dependencies that have yield.",
+    "source": "Code comment in routing.py lines 120-135",
+    "why_it_matters": "Essential for proper resource management in async contexts - ensures files are closed, database connections are released, and other cleanup happens even during errors or streaming responses."
+  },
+  {
+    "file": "fastapi/applications.py",
+    "line_number": 928,
+    "code": "if openapi_prefix:",
+    "context": "Inside FastAPI.__init__ checking for deprecated parameter",
+    "explanation": "This checks for the deprecated 'openapi_prefix' parameter and logs a warning directing users to use 'root_path' instead. The parameter still works (via 'self.root_path = root_path or openapi_prefix') but is marked for future removal. This follows the ASGI standard more closely and is simpler to understand.",
+    "source": "TODO comment at line 927 and deprecation warning",
+    "why_it_matters": "Shows proper deprecation strategy - warn users, provide migration path, but don't break existing code immediately."
+  },
+  {
+    "file": "fastapi/routing.py",
+    "line_number": 414,
+    "code": "if not actual_strict_content_type:",
+    "context": "Inside request handler when parsing JSON body",
+    "explanation": "When strict_content_type is False, FastAPI will parse request bodies as JSON even without a Content-Type header. The default is True to prevent CSRF attacks where browsers can send requests without Content-Type headers, bypassing CORS preflight checks. This is particularly important for applications running on localhost.",
+    "source": "Documentation in applications.py lines 848-858",
+    "why_it_matters": "Security feature that prevents cross-site request forgery attacks by requiring explicit Content-Type headers for JSON parsing."
+  },
+  {
+    "file": "fastapi/routing.py",
+    "line_number": 252,
+    "code": "_endpoint_context_cache: dict[int, EndpointContext] = {}",
+    "context": "Module-level cache for endpoint context information",
+    "explanation": "This cache stores endpoint context (file path, line number, function name) keyed by function id to avoid repeated calls to inspect.getsourcefile() and inspect.getsourcelines() on every request. These inspection operations involve file I/O and can be expensive, so caching improves performance significantly for high-traffic endpoints.",
+    "source": "Function docstring at line 259 and implementation",
+    "why_it_matters": "Performance optimization that reduces I/O overhead on every request while still providing detailed error context when validation fails."
+  },
+  {
+    "file": "fastapi/applications.py",
+    "line_number": 889,
+    "code": "self.separate_input_output_schemas = separate_input_output_schemas",
+    "context": "Inside FastAPI.__init__ storing configuration",
+    "explanation": "When True (the default), FastAPI generates separate OpenAPI schemas for request and response bodies when they differ. For example, a Pydantic model with default values requires those fields in responses but not in requests. This creates more precise API documentation and better client code generation.",
+    "source": "Documentation in applications.py lines 779-807",
+    "why_it_matters": "Improves API documentation accuracy and client SDK generation by distinguishing between what's required for input vs what's guaranteed in output."
+  },
+  {
+    "file": "fastapi/dependencies/utils.py",
+    "line_number": 888,
+    "code": "def _should_embed_body_fields(fields: list[ModelField]) -> bool:",
+    "context": "Helper function to determine body field embedding",
+    "explanation": "This function determines whether multiple body parameters should be embedded in a single JSON object or kept separate. If there's only one body field, it's used directly. If there are multiple, they're embedded in an object with keys matching the parameter names. This makes the API more intuitive - single parameters don't need wrapping, multiple parameters are clearly structured.",
+    "source": "Implementation and usage in routing.py",
+    "why_it_matters": "Affects the shape of request bodies in the API - determines whether clients send {\"item\": {...}} or just {...} for single body parameters."
+  },
+  {
+    "file": "fastapi/encoders.py",
+    "line_number": 212,
+    "code": "# This is mainly a hack for compatibility with SQLAlchemy objects",
+    "context": "Inside jsonable_encoder function handling object serialization",
+    "explanation": "FastAPI includes special handling for SQLAlchemy ORM objects, which don't serialize naturally to JSON. The encoder checks for __dict__ attributes and handles them specially to convert database models to JSON-compatible dictionaries. This is described as a 'hack' because it's a workaround for SQLAlchemy's design rather than a clean solution.",
+    "source": "Comment in encoders.py line 212",
+    "why_it_matters": "Enables seamless integration with SQLAlchemy without requiring users to manually convert ORM objects to Pydantic models or dicts."
+  },
+  {
+    "file": "fastapi/applications.py",
+    "line_number": 1096,
+    "code": "separate_input_output_schemas=self.separate_input_output_schemas,",
+    "context": "Inside openapi() method passing configuration to get_openapi()",
+    "explanation": "This passes the separate_input_output_schemas configuration to the OpenAPI schema generator. The setting controls whether Pydantic models with default values generate different schemas for requests (where defaults are optional) vs responses (where defaults are always present). This was introduced with Pydantic v2 support.",
+    "source": "Related to Pydantic v2 migration and schema generation",
+    "why_it_matters": "Ensures OpenAPI documentation accurately reflects the actual API behavior regarding optional vs required fields in different contexts."
+  }
+]

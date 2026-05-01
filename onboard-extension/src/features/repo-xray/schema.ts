@@ -70,9 +70,11 @@ export const WeirdPartSchema = z.object({
   hypothesis: z.string().describe('Hypothesis about why this exists (historical reason, workaround, etc.)'),
   contradicts: z.string().optional().describe('Which convention or pattern this contradicts'),
   severity: z.enum(['high', 'medium', 'low']).describe('How much this deviates from normal patterns'),
+  category: z.string().optional().describe('The constraint category of this weird part'),
 });
 
 export const WeirdPartsResponseSchema = z.object({
+  _reasoning: z.string().optional().describe('Chain of thought reasoning before extracting findings'),
   weirdParts: z.array(WeirdPartSchema).describe('List of identified weird parts'),
   summary: z.string().describe('Overall assessment of code consistency'),
 });

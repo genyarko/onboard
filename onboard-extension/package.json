@@ -3,6 +3,7 @@
   "displayName": "Onboard",
   "description": "AI-powered codebase onboarding assistant powered by IBM Bob",
   "version": "0.0.1",
+  "publisher": "onboard-team",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -18,8 +19,70 @@
       {
         "command": "onboard.xrayRepo",
         "title": "Onboard: X-Ray Repository"
+      },
+      {
+        "command": "onboard.whyIsThisHere",
+        "title": "Onboard: Why Is This Here?"
+      },
+      {
+        "command": "onboard.whyIsThisHere.clearCache",
+        "title": "Onboard: Clear Why-Is-This-Here Cache"
+      },
+      {
+        "command": "onboard.generateDayNPlan",
+        "title": "Onboard: Generate 5-Day Plan",
+        "icon": "$(calendar)"
+      },
+      {
+        "command": "onboard.refreshDayNPlan",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "onboard.clearDayNPlan",
+        "title": "Clear Plan",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "onboard.findStarterTasks",
+        "title": "Onboard: Find Starter Tasks"
       }
-    ]
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "onboard.dayNPlan",
+          "name": "Day-N Plan",
+          "icon": "$(calendar)",
+          "contextualTitle": "Onboarding Plan"
+        }
+      ]
+    },
+    "menus": {
+      "editor/context": [
+        {
+          "command": "onboard.whyIsThisHere",
+          "group": "navigation@1"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "onboard.generateDayNPlan",
+          "when": "view == onboard.dayNPlan",
+          "group": "navigation@1"
+        },
+        {
+          "command": "onboard.refreshDayNPlan",
+          "when": "view == onboard.dayNPlan",
+          "group": "navigation@2"
+        },
+        {
+          "command": "onboard.clearDayNPlan",
+          "when": "view == onboard.dayNPlan",
+          "group": "navigation@3"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
@@ -27,17 +90,25 @@
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
-    "test": "node ./out/test/runTest.js"
+    "test": "node ./out/test/runTest.js",
+    "eval": "cd ../eval && npm run eval"
   },
   "devDependencies": {
-    "@types/vscode": "^1.85.0",
+    "@types/glob": "^8.1.0",
+    "@types/mocha": "^10.0.10",
     "@types/node": "20.x",
+    "@types/vscode": "^1.85.0",
     "@typescript-eslint/eslint-plugin": "^6.15.0",
     "@typescript-eslint/parser": "^6.15.0",
+    "@vscode/test-electron": "^2.5.2",
     "eslint": "^8.56.0",
+    "glob": "^13.0.6",
+    "mocha": "^11.7.5",
+    "ts-node": "^10.9.2",
     "typescript": "^5.3.3"
   },
   "dependencies": {
+    "dotenv": "^17.4.2",
     "zod": "^3.22.4"
   }
 }

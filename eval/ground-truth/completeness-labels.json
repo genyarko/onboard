@@ -1,0 +1,47 @@
+[
+  {
+    "weird_part": "Vendored _DefaultLifespan class from Starlette",
+    "location": "fastapi/routing.py lines 226-245",
+    "code_snippet": "class _DefaultLifespan:\n    \"\"\"\n    Default lifespan context manager that runs on_startup and on_shutdown handlers.\n\n    This is a copy of the Starlette _DefaultLifespan class that was removed\n    in Starlette. FastAPI keeps it to maintain backward compatibility with\n    on_startup and on_shutdown event handlers.\n\n    Ref: https://github.com/Kludex/starlette/pull/3117\n    \"\"\"",
+    "why_weird": "FastAPI literally copied an entire class from Starlette after it was removed upstream. This is unusual because most frameworks would just break backward compatibility or require users to update their code.",
+    "why_it_exists": "Starlette removed support for on_startup/on_shutdown event handlers in favor of the newer lifespan context manager pattern. Rather than forcing all FastAPI users to immediately migrate their code, FastAPI vendored the removed class to maintain backward compatibility. This gives users time to migrate at their own pace.",
+    "implications": "Users can still use the old on_startup/on_shutdown pattern even though it's deprecated. The code has TODO comments indicating this will eventually be removed, but for now it prevents breaking changes.",
+    "category": "backward_compatibility"
+  },
+  {
+    "weird_part": "Nested AsyncExitStack pattern for dependency cleanup",
+    "location": "fastapi/routing.py lines 116-135",
+    "code_snippet": "async with AsyncExitStack() as request_stack:\n    scope[\"fastapi_inner_astack\"] = request_stack\n    async with AsyncExitStack() as function_stack:\n        scope[\"fastapi_function_astack\"] = function_stack\n        response = await f(request)\n    await response(scope, receive, send)",
+    "why_weird": "FastAPI uses TWO nested AsyncExitStack contexts instead of one. This is non-obvious and seems redundant at first glance. Most frameworks would use a single context manager for cleanup.",
+    "why_it_exists": "The dual-stack pattern solves a complex problem: dependencies with yield need to be cleaned up AFTER the response is sent, but BEFORE the request context ends. The inner stack (function_stack) handles the endpoint execution, while the outer stack (request_stack) handles dependency cleanup. This separation is crucial for streaming responses - the function can return a generator that streams data, and dependencies are only cleaned up after streaming completes.",
+    "implications": "This enables streaming responses while properly managing dependency lifecycles. Without this pattern, dependencies would either be cleaned up too early (breaking streaming) or too late (leaking resources). The comment mentions this used to be needed for dependencies with yield, but is now mainly for file cleanup.",
+    "category": "non_obvious_convention"
+  },
+  {
+    "weird_part": "SQLAlchemy compatibility hack in jsonable_encoder",
+    "location": "fastapi/encoders.py line 212",
+    "code_snippet": "# This is mainly a hack for compatibility with SQLAlchemy objects, they\n# have a __dict__ that contains internal SQLAlchemy state, but also\n# have a __dict__ that contains the actual data",
+    "why_weird": "The code explicitly calls itself a 'hack' in the comments. It includes special-case handling for SQLAlchemy ORM objects that don't naturally serialize to JSON, checking for __dict__ attributes and handling them specially.",
+    "why_it_exists": "SQLAlchemy ORM objects are commonly used with FastAPI for database operations, but they don't serialize naturally to JSON. Rather than requiring users to manually convert every ORM object to a Pydantic model or dict, FastAPI includes this workaround to make SQLAlchemy objects 'just work' when returned from endpoints.",
+    "implications": "Users can return SQLAlchemy models directly from endpoints without explicit conversion. However, this is a workaround rather than a proper solution - the 'right' way would be to use Pydantic models or explicit serialization. The hack makes FastAPI more convenient but potentially hides the underlying complexity.",
+    "category": "workaround"
+  },
+  {
+    "weird_part": "The openapi_prefix parameter that still works but is deprecated",
+    "location": "fastapi/applications.py lines 624-636, 927-936",
+    "code_snippet": "openapi_prefix: Annotated[\n    str,\n    Doc(...),\n    deprecated(\n        \"\"\"\n        \"openapi_prefix\" has been deprecated in favor of \"root_path\", which\n        follows more closely the ASGI standard, is simpler, and more\n        automatic.\n        \"\"\"\n    ),\n] = \"\",",
+    "why_weird": "The parameter is marked as deprecated with a decorator, logs a warning when used, has a TODO comment to remove it, BUT still fully works via 'self.root_path = root_path or openapi_prefix'. Most frameworks would either remove deprecated parameters or keep them without warnings.",
+    "why_it_exists": "FastAPI originally used 'openapi_prefix' but later adopted 'root_path' to better align with the ASGI standard. Rather than immediately breaking existing code, they deprecated it with warnings while keeping it functional. The fallback logic ensures old code continues working while encouraging migration.",
+    "implications": "Existing applications using openapi_prefix continue to work without modification, but developers see warnings encouraging them to migrate. This is a textbook example of graceful deprecation - warn users, provide a migration path, but don't break anything.",
+    "category": "legacy_decision"
+  },
+  {
+    "weird_part": "Single body parameter unwrapping via _should_embed_body_fields",
+    "location": "fastapi/dependencies/utils.py line 888",
+    "code_snippet": "def _should_embed_body_fields(fields: list[ModelField]) -> bool:\n    # If there's only one body field, don't embed it\n    # If there are multiple, embed them in an object",
+    "why_weird": "FastAPI automatically changes the shape of request bodies based on the number of body parameters. With one parameter, clients send the object directly. With multiple parameters, clients must wrap them in an object with named keys. This behavior is implicit and not immediately obvious from the function signatures.",
+    "why_it_exists": "This makes the API more intuitive for common cases. When you have a single body parameter like 'item: Item', it would be awkward to require clients to send '{\"item\": {...}}' instead of just '{...}'. But with multiple body parameters, you need the wrapper to distinguish them. FastAPI automatically handles this to provide the best developer experience in both cases.",
+    "implications": "The request body shape changes based on the number of parameters, which can be surprising. A function with 'def create(item: Item)' expects '{\"name\": \"foo\"}', but 'def create(item: Item, metadata: Metadata)' expects '{\"item\": {...}, \"metadata\": {...}}'. This is documented but non-obvious from the code alone.",
+    "category": "non_obvious_convention"
+  }
+]

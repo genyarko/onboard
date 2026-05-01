@@ -4,104 +4,50 @@ import { generateWhyIsThisHerePrompt, generateFallbackPrompt } from './prompt';
 import { validateExplanation, WhyIsThisHereExplanation } from './schema';
 import { ask, validateResponse } from '../../bob/client';
 
-/**
- * Hover provider for "Why Is This Here" feature
- * Shows git history and context for code lines
- */
-export class WhyIsThisHereProvider implements vscode.HoverProvider {
-  private cache: Map<string, { explanation: WhyIsThisHereExplanation; timestamp: number }> = new Map();
-  private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL_MS = 5 * 60 * 1000;
+const CACHE_MAX_ENTRIES = 100;
 
-  async provideHover(
+export class WhyIsThisHereService {
+  private cache = new Map<string, { explanation: WhyIsThisHereExplanation; timestamp: number }>();
+
+  async analyze(
     document: vscode.TextDocument,
     position: vscode.Position,
+    progress: vscode.Progress<{ message?: string; increment?: number }>,
     token: vscode.CancellationToken
-  ): Promise<vscode.Hover | null> {
-    try {
-      // Check if we're in a git repository
-      const isGitRepo = await isGitRepository();
-      
-      // Get the current line
-      const line = document.lineAt(position.line);
-      const lineContent = line.text.trim();
-      
-      // Skip empty lines or lines with only whitespace
-      if (!lineContent) {
-        return null;
-      }
-
-      // Create cache key
-      const cacheKey = `${document.uri.fsPath}:${position.line}:${lineContent}`;
-      
-      // Check cache
-      const cached = this.cache.get(cacheKey);
-      if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
-        return this.formatHover(cached.explanation);
-      }
-
-      // Show progress indicator
-      return vscode.window.withProgress(
-        {
-          location: vscode.ProgressLocation.Notification,
-          title: 'Analyzing code context...',
-          cancellable: true,
-        },
-        async (progress, progressToken) => {
-          // Check for cancellation
-          if (token.isCancellationRequested || progressToken.isCancellationRequested) {
-            return null;
-          }
-
-          let explanation: WhyIsThisHereExplanation;
-
-          if (isGitRepo) {
-            // Git repository - full analysis with history
-            explanation = await this.analyzeWithGitHistory(
-              document,
-              position,
-              lineContent,
-              progress,
-              progressToken
-            );
-          } else {
-            // No git repository - fallback to code analysis only
-            explanation = await this.analyzeWithoutGitHistory(
-              document,
-              position,
-              lineContent,
-              progress,
-              progressToken
-            );
-          }
-
-          // Check for cancellation before caching
-          if (token.isCancellationRequested || progressToken.isCancellationRequested) {
-            return null;
-          }
-
-          // Cache the result
-          this.cache.set(cacheKey, {
-            explanation,
-            timestamp: Date.now(),
-          });
-
-          return this.formatHover(explanation);
-        }
-      );
-    } catch (error) {
-      console.error('Error in WhyIsThisHereProvider:', error);
-      
-      // Show error message to user
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      return new vscode.Hover(
-        new vscode.MarkdownString(`**Error analyzing code:**\n\n${errorMessage}`)
-      );
+  ): Promise<WhyIsThisHereExplanation | null> {
+    const line = document.lineAt(position.line);
+    const lineContent = line.text.trim();
+    if (!lineContent) {
+      return null;
     }
+
+    const cacheKey = `${document.uri.fsPath}:${position.line}`;
+    const cached = this.cache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      return cached.explanation;
+    }
+
+    const isGitRepo = await isGitRepository();
+    const explanation = isGitRepo
+      ? await this.analyzeWithGitHistory(document, position, lineContent, progress, token)
+      : await this.analyzeWithoutGitHistory(document, position, lineContent, progress, token);
+
+    if (token.isCancellationRequested) {
+      return null;
+    }
+
+    if (this.cache.size >= CACHE_MAX_ENTRIES) {
+      const oldest = this.cache.keys().next().value;
+      if (oldest) {
+        this.cache.delete(oldest);
+      }
+    }
+    this.cache.set(cacheKey, { explanation, timestamp: Date.now() });
+
+    return explanation;
   }
 
-  /**
-   * Analyze code with git history
-   */
   private async analyzeWithGitHistory(
     document: vscode.TextDocument,
     position: vscode.Position,
@@ -109,46 +55,23 @@ export class WhyIsThisHereProvider implements vscode.HoverProvider {
     progress: vscode.Progress<{ message?: string; increment?: number }>,
     token: vscode.CancellationToken
   ): Promise<WhyIsThisHereExplanation> {
-    // Step 1: Get surrounding context (±30 lines)
     progress.report({ message: 'Getting code context...', increment: 10 });
     const surroundingCode = this.getSurroundingContext(document, position.line, 30);
+    if (token.isCancellationRequested) throw new Error('Operation cancelled');
 
-    if (token.isCancellationRequested) {
-      throw new Error('Operation cancelled');
-    }
-
-    // Step 2: Fetch git history for this line
     progress.report({ message: 'Fetching git history...', increment: 20 });
-    const history = await getLineHistory(document.uri.fsPath, position.line + 1); // Git uses 1-based line numbers
+    const history = await getLineHistory(document.uri.fsPath, position.line + 1);
+    if (token.isCancellationRequested) throw new Error('Operation cancelled');
 
-    if (token.isCancellationRequested) {
-      throw new Error('Operation cancelled');
-    }
+    progress.report({ message: 'Getting commit details...', increment: 20 });
+    const commitDetails = history.length > 0 ? await getCommitDetails(history[0].hash) : null;
+    if (token.isCancellationRequested) throw new Error('Operation cancelled');
 
-    // Step 3: Get commit details for the most recent commit
-    progress.report({ message: 'Getting commit details...', increment: 30 });
-    let commitDetails = null;
-    if (history.length > 0) {
-      commitDetails = await getCommitDetails(history[0].hash);
-    }
+    progress.report({ message: 'Fetching PR details...', increment: 10 });
+    const linkedPRs = history.length > 0 ? await getLinkedPRs(history[0].hash) : [];
+    if (token.isCancellationRequested) throw new Error('Operation cancelled');
 
-    if (token.isCancellationRequested) {
-      throw new Error('Operation cancelled');
-    }
-
-    // Step 4: Fetch linked PR/issue details
-    progress.report({ message: 'Fetching PR details...', increment: 40 });
-    let linkedPRs: any[] = [];
-    if (history.length > 0) {
-      linkedPRs = await getLinkedPRs(history[0].hash);
-    }
-
-    if (token.isCancellationRequested) {
-      throw new Error('Operation cancelled');
-    }
-
-    // Step 5: Build context object and generate prompt
-    progress.report({ message: 'Building context...', increment: 50 });
+    progress.report({ message: 'Asking Bob...', increment: 30 });
     const prompt = generateWhyIsThisHerePrompt({
       filePath: vscode.workspace.asRelativePath(document.uri.fsPath),
       lineNumber: position.line + 1,
@@ -158,34 +81,16 @@ export class WhyIsThisHereProvider implements vscode.HoverProvider {
       linkedPRs: linkedPRs.length > 0 ? linkedPRs : undefined,
       surroundingCode,
     });
-
-    if (token.isCancellationRequested) {
-      throw new Error('Operation cancelled');
-    }
-
-    // Step 6: Call Bob with prompt
-    progress.report({ message: 'Asking Bob...', increment: 60 });
     const response = await ask<WhyIsThisHereExplanation>(prompt);
-
     if (!response.success || !response.data) {
       throw new Error(response.error || 'Failed to get response from Bob');
     }
+    if (token.isCancellationRequested) throw new Error('Operation cancelled');
 
-    if (token.isCancellationRequested) {
-      throw new Error('Operation cancelled');
-    }
-
-    // Step 7: Validate response
-    progress.report({ message: 'Validating response...', increment: 80 });
-    const validatedExplanation = validateResponse(response.data, validateExplanation);
-
-    progress.report({ message: 'Done!', increment: 100 });
-    return validatedExplanation;
+    progress.report({ message: 'Validating response...', increment: 10 });
+    return validateResponse(response.data, validateExplanation);
   }
 
-  /**
-   * Analyze code without git history (fallback)
-   */
   private async analyzeWithoutGitHistory(
     document: vscode.TextDocument,
     position: vscode.Position,
@@ -193,50 +98,27 @@ export class WhyIsThisHereProvider implements vscode.HoverProvider {
     progress: vscode.Progress<{ message?: string; increment?: number }>,
     token: vscode.CancellationToken
   ): Promise<WhyIsThisHereExplanation> {
-    // Get surrounding context
     progress.report({ message: 'Getting code context...', increment: 20 });
     const surroundingCode = this.getSurroundingContext(document, position.line, 30);
+    if (token.isCancellationRequested) throw new Error('Operation cancelled');
 
-    if (token.isCancellationRequested) {
-      throw new Error('Operation cancelled');
-    }
-
-    // Generate fallback prompt
-    progress.report({ message: 'Building context...', increment: 40 });
+    progress.report({ message: 'Asking Bob...', increment: 50 });
     const prompt = generateFallbackPrompt(
       vscode.workspace.asRelativePath(document.uri.fsPath),
       position.line + 1,
       lineContent,
       surroundingCode
     );
-
-    if (token.isCancellationRequested) {
-      throw new Error('Operation cancelled');
-    }
-
-    // Call Bob
-    progress.report({ message: 'Asking Bob...', increment: 60 });
     const response = await ask<WhyIsThisHereExplanation>(prompt);
-
     if (!response.success || !response.data) {
       throw new Error(response.error || 'Failed to get response from Bob');
     }
+    if (token.isCancellationRequested) throw new Error('Operation cancelled');
 
-    if (token.isCancellationRequested) {
-      throw new Error('Operation cancelled');
-    }
-
-    // Validate response
-    progress.report({ message: 'Validating response...', increment: 80 });
-    const validatedExplanation = validateResponse(response.data, validateExplanation);
-
-    progress.report({ message: 'Done!', increment: 100 });
-    return validatedExplanation;
+    progress.report({ message: 'Validating response...', increment: 20 });
+    return validateResponse(response.data, validateExplanation);
   }
 
-  /**
-   * Get surrounding code context (±N lines)
-   */
   private getSurroundingContext(
     document: vscode.TextDocument,
     lineNumber: number,
@@ -247,115 +129,65 @@ export class WhyIsThisHereProvider implements vscode.HoverProvider {
 
     const lines: string[] = [];
     for (let i = startLine; i <= endLine; i++) {
-      const line = document.lineAt(i);
-      const prefix = i === lineNumber ? '>>> ' : '    '; // Highlight the target line
-      lines.push(`${prefix}${i + 1}: ${line.text}`);
+      const prefix = i === lineNumber ? '>>> ' : '    ';
+      lines.push(`${prefix}${i + 1}: ${document.lineAt(i).text}`);
     }
-
     return lines.join('\n');
   }
 
-  /**
-   * Format the explanation as a hover markdown
-   */
-  private formatHover(explanation: WhyIsThisHereExplanation): vscode.Hover {
-    const markdown = new vscode.MarkdownString();
-    markdown.isTrusted = true;
-    markdown.supportHtml = true;
-
-    // Title
-    markdown.appendMarkdown('## 🔍 Why Is This Here?\n\n');
-
-    // Summary
-    if (explanation.summary) {
-      markdown.appendMarkdown(`**Summary:** ${explanation.summary}\n\n`);
-    }
-
-    // Business Reason
-    if (explanation.businessReason) {
-      markdown.appendMarkdown(`### 💼 Business Reason\n\n${explanation.businessReason}\n\n`);
-    }
-
-    // Technical Context
-    if (explanation.technicalContext) {
-      markdown.appendMarkdown(`### ⚙️ Technical Context\n\n${explanation.technicalContext}\n\n`);
-    }
-
-    // Related Changes
-    if (explanation.relatedChanges && explanation.relatedChanges.length > 0) {
-      markdown.appendMarkdown('### 🔗 Related Changes\n\n');
-      explanation.relatedChanges.forEach((change) => {
-        markdown.appendMarkdown(`- ${change.description}`);
-        if (change.location) {
-          markdown.appendMarkdown(` (${change.location})`);
-        }
-        if (change.commit) {
-          markdown.appendMarkdown(` \`${change.commit.substring(0, 7)}\``);
-        }
-        markdown.appendMarkdown('\n');
-      });
-      markdown.appendMarkdown('\n');
-    }
-
-    // Related Commits
-    if (explanation.relatedCommits && explanation.relatedCommits.length > 0) {
-      markdown.appendMarkdown('### 📝 Related Commits\n\n');
-      explanation.relatedCommits.forEach((commit) => {
-        markdown.appendMarkdown(`- \`${commit.hash.substring(0, 7)}\` ${commit.message}\n`);
-        if (commit.relevance) {
-          markdown.appendMarkdown(`  - *${commit.relevance}*\n`);
-        }
-      });
-      markdown.appendMarkdown('\n');
-    }
-
-    // Notes
-    if (explanation.notes) {
-      markdown.appendMarkdown(`### 📌 Notes\n\n${explanation.notes}\n\n`);
-    }
-
-    // Confidence indicator
-    const confidenceEmoji = {
-      high: '🟢',
-      medium: '🟡',
-      low: '🔴',
-    };
-    markdown.appendMarkdown(
-      `---\n\n*Confidence: ${confidenceEmoji[explanation.confidence]} ${explanation.confidence}*`
-    );
-
-    return new vscode.Hover(markdown);
-  }
-
-  /**
-   * Clear the cache
-   */
-  public clearCache(): void {
+  clearCache(): void {
     this.cache.clear();
   }
 }
 
-/**
- * Register the Why Is This Here hover provider
- */
-export function registerWhyIsThisHereProvider(context: vscode.ExtensionContext): void {
-  const provider = new WhyIsThisHereProvider();
+export function formatExplanationMarkdown(
+  explanation: WhyIsThisHereExplanation,
+  filePath: string,
+  lineNumber: number,
+  lineContent: string
+): string {
+  const confidenceEmoji = { high: '🟢', medium: '🟡', low: '🔴' } as const;
+  const parts: string[] = [];
 
-  const disposable = vscode.languages.registerHoverProvider(
-    { scheme: 'file' }, // Apply to all file schemes
-    provider
-  );
+  parts.push(`# Why Is This Here?\n`);
+  parts.push(`**File:** \`${filePath}\` · **Line:** ${lineNumber}\n`);
+  parts.push('```');
+  parts.push(lineContent);
+  parts.push('```\n');
 
-  context.subscriptions.push(disposable);
-
-  // Add command to clear cache
-  const clearCacheCommand = vscode.commands.registerCommand(
-    'onboard.whyIsThisHere.clearCache',
-    () => {
-      provider.clearCache();
-      vscode.window.showInformationMessage('Why Is This Here cache cleared');
+  if (explanation.summary) {
+    parts.push(`**Summary:** ${explanation.summary}\n`);
+  }
+  if (explanation.businessReason) {
+    parts.push(`## Business Reason\n\n${explanation.businessReason}\n`);
+  }
+  if (explanation.technicalContext) {
+    parts.push(`## Technical Context\n\n${explanation.technicalContext}\n`);
+  }
+  if (explanation.relatedChanges && explanation.relatedChanges.length > 0) {
+    parts.push(`## Related Changes\n`);
+    for (const change of explanation.relatedChanges) {
+      const loc = change.location ? ` (${change.location})` : '';
+      const sha = change.commit ? ` \`${change.commit.substring(0, 7)}\`` : '';
+      parts.push(`- ${change.description}${loc}${sha}`);
     }
-  );
+    parts.push('');
+  }
+  if (explanation.relatedCommits && explanation.relatedCommits.length > 0) {
+    parts.push(`## Related Commits\n`);
+    for (const commit of explanation.relatedCommits) {
+      parts.push(`- \`${commit.hash.substring(0, 7)}\` ${commit.message}`);
+      if (commit.relevance) {
+        parts.push(`  - *${commit.relevance}*`);
+      }
+    }
+    parts.push('');
+  }
+  if (explanation.notes) {
+    parts.push(`## Notes\n\n${explanation.notes}\n`);
+  }
+  parts.push(`---\n`);
+  parts.push(`*Confidence: ${confidenceEmoji[explanation.confidence]} ${explanation.confidence}*`);
 
-  context.subscriptions.push(clearCacheCommand);
+  return parts.join('\n');
 }

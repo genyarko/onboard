@@ -46,27 +46,23 @@ export async function getLineHistory(
     // Get relative path from workspace root
     const relativePath = vscode.workspace.asRelativePath(file);
     
-    // Use git log -L to get line-specific history
-    // Format: hash|author|date|message
-    const command = `git log -L ${line},${line}:"${relativePath}" --pretty=format:"%H|%an|%ai|%s" --no-patch`;
-    
+    // Bounded to last 5 revisions and follows renames; --no-patch keeps output small
+    const command = `git log -L ${line},${line}:"${relativePath}" -n 5 --pretty=format:"%H|%an|%ai|%s" --no-patch`;
+
     const { stdout } = await execAsync(command, {
       cwd: workspaceFolder.uri.fsPath,
-      maxBuffer: 1024 * 1024 * 10, // 10MB buffer
+      maxBuffer: 1024 * 1024 * 2,
+      timeout: 5000,
     });
 
     if (!stdout.trim()) {
       return [];
     }
 
-    // Parse the output
     const logs: GitLog[] = [];
-    const lines = stdout.trim().split('\n');
-    
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      
-      const [hash, author, dateStr, ...messageParts] = line.split('|');
+    for (const row of stdout.trim().split('\n')) {
+      if (!row.trim()) continue;
+      const [hash, author, dateStr, ...messageParts] = row.split('|');
       if (!hash || !author || !dateStr) continue;
 
       logs.push({
@@ -94,37 +90,33 @@ export async function getCommitDetails(hash: string): Promise<CommitDetails | nu
       throw new Error('No workspace folder found');
     }
 
-    // Get commit details with custom format
-    // Format: hash|author|email|date|subject|body
-    const command = `git show ${hash} --pretty=format:"%H|%an|%ae|%ai|%s|%b" --name-only --no-patch`;
-    
-    const { stdout } = await execAsync(command, {
-      cwd: workspaceFolder.uri.fsPath,
-      maxBuffer: 1024 * 1024 * 10,
-    });
+    // Sentinel-delimited fields so multi-line commit bodies don't corrupt parsing.
+    const SEP = '<<<ONBOARD_FIELD>>>';
+    const END = '<<<ONBOARD_END>>>';
+    const format = ['%H', '%an', '%ae', '%ai', '%s', '%b'].join(SEP) + END;
 
-    if (!stdout.trim()) {
-      return null;
-    }
+    const { stdout: metaOut } = await execAsync(
+      `git show -s --pretty=format:"${format}" ${hash}`,
+      { cwd: workspaceFolder.uri.fsPath, maxBuffer: 1024 * 1024 * 2, timeout: 5000 }
+    );
 
-    const lines = stdout.trim().split('\n');
-    const firstLine = lines[0];
-    
-    const [hash_out, author, email, dateStr, subject, ...bodyParts] = firstLine.split('|');
-    
-    // Files are listed after the commit info (separated by empty line)
-    const emptyLineIndex = lines.findIndex((line, idx) => idx > 0 && !line.trim());
-    const files = emptyLineIndex > 0 
-      ? lines.slice(emptyLineIndex + 1).filter(f => f.trim())
-      : [];
+    const meta = metaOut.split(END)[0] ?? '';
+    const [hashOut, author, email, dateStr, subject, body] = meta.split(SEP);
+
+    // Files in a separate call — clean and unambiguous.
+    const { stdout: filesOut } = await execAsync(
+      `git show --name-only --pretty=format: ${hash}`,
+      { cwd: workspaceFolder.uri.fsPath, maxBuffer: 1024 * 1024 * 2, timeout: 5000 }
+    );
+    const files = filesOut.split('\n').map(f => f.trim()).filter(Boolean);
 
     return {
-      hash: hash_out?.trim() || hash,
+      hash: hashOut?.trim() || hash,
       author: author?.trim() || '',
       authorEmail: email?.trim() || '',
       date: new Date(dateStr?.trim() || ''),
       message: subject?.trim() || '',
-      body: bodyParts.join('|').trim(),
+      body: (body ?? '').trim(),
       files,
     };
   } catch (error) {
