@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { executeRepoXRay } from './features/repo-xray/command';
+import { registerWhyIsThisHereProvider } from './features/why-is-this-here/provider';
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Onboard extension is now active');
@@ -17,6 +18,9 @@ export function activate(context: vscode.ExtensionContext) {
     });
 
     context.subscriptions.push(xrayCommand);
+
+    // Register Why Is This Here hover provider
+    registerWhyIsThisHereProvider(context);
 }
 
 export function deactivate() {}

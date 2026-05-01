@@ -138,7 +138,7 @@ export class WhyIsThisHereProvider implements vscode.HoverProvider {
 
     // Step 4: Fetch linked PR/issue details
     progress.report({ message: 'Fetching PR details...', increment: 40 });
-    let linkedPRs = [];
+    let linkedPRs: any[] = [];
     if (history.length > 0) {
       linkedPRs = await getLinkedPRs(history[0].hash);
     }
