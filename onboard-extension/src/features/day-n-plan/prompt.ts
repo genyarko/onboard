@@ -8,6 +8,7 @@ export interface DayNPlanContext {
   repositoryName: string;
   fileTree: string;
   config: PlanConfig;
+  customTemplate?: string;
   repoXRayData?: {
     entryPoints?: string;
     architectureDiagram?: string;
@@ -27,7 +28,7 @@ export interface DayNPlanContext {
  * - Day 5: Real contribution with a starter task
  */
 export function buildDayNPlanPrompt(context: DayNPlanContext): string {
-  const { repositoryName, repositoryPath, fileTree, config, repoXRayData } = context;
+  const { repositoryName, repositoryPath, fileTree, config, repoXRayData, customTemplate } = context;
   
   const repoXRaySection = repoXRayData ? `
 <repository_analysis>
@@ -39,28 +40,12 @@ ${repoXRayData.technicalStack ? `Tech Stack: ${repoXRayData.technicalStack.join(
 </repository_analysis>
 ` : '';
 
-  return `<role>
-You are a senior engineering manager and technical mentor creating a personalized 5-day onboarding plan for a new team member.
-</role>
-
-<task>
-Create a comprehensive, actionable 5-day onboarding plan for a new ${config.role} joining the team.
-
-<new_team_member>
-Role: ${config.role}
-Seniority: ${config.seniority}
-${config.focusArea ? `Focus Area: ${config.focusArea}` : ''}
-</new_team_member>
-
-<repository>
-Name: ${repositoryName}
-Path: ${repositoryPath}
-
-File Tree:
-${fileTree}
-${repoXRaySection}
-</repository>
-
+  const planStructure = customTemplate ? `
+<plan_structure>
+The user has provided a custom template for the 5-day plan. Please adapt the following template structure to the provided codebase:
+${customTemplate}
+</plan_structure>
+` : `
 <plan_structure>
 Create a 5-day plan with clear progression:
 
@@ -95,6 +80,31 @@ Create a 5-day plan with clear progression:
 - Estimated time: 1-2 hours of reading, 4-6 hours for task
 
 </plan_structure>
+`;
+
+  return `<role>
+You are a senior engineering manager and technical mentor creating a personalized 5-day onboarding plan for a new team member.
+</role>
+
+<task>
+Create a comprehensive, actionable 5-day onboarding plan for a new ${config.role} joining the team.
+
+<new_team_member>
+Role: ${config.role}
+Seniority: ${config.seniority}
+${config.focusArea ? `Focus Area: ${config.focusArea}` : ''}
+</new_team_member>
+
+<repository>
+Name: ${repositoryName}
+Path: ${repositoryPath}
+
+File Tree:
+${fileTree}
+${repoXRaySection}
+</repository>
+
+${planStructure}
 
 <guidelines>
 1. **Tailor to seniority:**
@@ -207,7 +217,8 @@ export function buildDayNPlanContext(
     criticalPath?: string;
     conventions?: string;
     technicalStack?: string[];
-  }
+  },
+  customTemplate?: string
 ): DayNPlanContext {
   const repositoryName = repositoryPath.split(/[/\\]/).pop() || 'unknown';
   
@@ -216,6 +227,7 @@ export function buildDayNPlanContext(
     repositoryName,
     fileTree,
     config,
+    customTemplate,
     repoXRayData,
   };
 }

@@ -1,15 +1,21 @@
 import * as path from 'path';
 import * as fs from 'fs/promises';
+import * as vscode from 'vscode';
 import { RepoXRayResult } from './schema';
 
 /**
  * Render the complete Repo X-Ray result as a markdown document
  * @param result The complete analysis result
  * @param workspaceRoot The workspace root path
+ * @param previousResult Optional previous analysis result for comparison
  * @returns Path to the generated markdown file
  */
-export async function renderMarkdown(result: RepoXRayResult, workspaceRoot: string): Promise<string> {
-  const markdown = buildMarkdownDocument(result);
+export async function renderMarkdown(
+  result: RepoXRayResult, 
+  workspaceRoot: string, 
+  previousResult?: RepoXRayResult
+): Promise<string> {
+  const markdown = buildMarkdownDocument(result, previousResult);
   const outputPath = path.join(workspaceRoot, 'ONBOARD_XRAY.md');
   
   await fs.writeFile(outputPath, markdown, 'utf-8');
@@ -20,14 +26,19 @@ export async function renderMarkdown(result: RepoXRayResult, workspaceRoot: stri
 /**
  * Build the complete markdown document
  */
-function buildMarkdownDocument(result: RepoXRayResult): string {
+function buildMarkdownDocument(result: RepoXRayResult, previousResult?: RepoXRayResult): string {
   const sections: string[] = [];
 
   // Header
   sections.push(renderHeader(result));
 
   // Table of Contents
-  sections.push(renderTableOfContents());
+  sections.push(renderTableOfContents(!!previousResult));
+
+  // Comparison Section (if available)
+  if (previousResult) {
+    sections.push(renderArchitectureComparison(result, previousResult));
+  }
 
   // Entry Points Section
   sections.push(renderEntryPoints(result));
@@ -73,15 +84,82 @@ This document provides a complete overview of the codebase architecture, convent
 /**
  * Render table of contents
  */
-function renderTableOfContents(): string {
-  return `## 📋 Table of Contents
+function renderTableOfContents(hasComparison: boolean): string {
+  const lines = [
+    '## 📋 Table of Contents',
+    '',
+  ];
 
-1. [Entry Points](#-entry-points)
-2. [Architecture Overview](#-architecture-overview)
-3. [Critical Path](#-critical-path)
-4. [Coding Conventions](#-coding-conventions)
-5. [Technical Stack](#-technical-stack)
-6. [Weird Parts](#-weird-parts)`;
+  if (hasComparison) {
+    lines.push('0. [Architecture Comparison](#-architecture-comparison)');
+  }
+  
+  lines.push('1. [Entry Points](#-entry-points)');
+  lines.push('2. [Architecture Overview](#-architecture-overview)');
+  lines.push('3. [Critical Path](#-critical-path)');
+  lines.push('4. [Coding Conventions](#-coding-conventions)');
+  lines.push('5. [Technical Stack](#-technical-stack)');
+  lines.push('6. [Weird Parts](#-weird-parts)');
+
+  return lines.join('\n');
+}
+
+/**
+ * Render architecture comparison over time
+ */
+function renderArchitectureComparison(current: RepoXRayResult, previous: RepoXRayResult): string {
+  const sections: string[] = [
+    '## 🔄 Architecture Comparison',
+    '',
+    `Comparing current analysis (${new Date(current.metadata.analyzedAt).toLocaleDateString()}) with previous analysis (${new Date(previous.metadata.analyzedAt).toLocaleDateString()}).`,
+    '',
+  ];
+
+  // Compare Entry Points
+  const currentEPs = new Set(current.entryPoints.entryPoints.map(ep => ep.file));
+  const previousEPs = new Set(previous.entryPoints.entryPoints.map(ep => ep.file));
+
+  const addedEPs = Array.from(currentEPs).filter(ep => !previousEPs.has(ep));
+  const removedEPs = Array.from(previousEPs).filter(ep => !currentEPs.has(ep));
+
+  if (addedEPs.length > 0 || removedEPs.length > 0) {
+    sections.push('### 🚪 Entry Point Changes');
+    if (addedEPs.length > 0) {
+      sections.push('**Added:**');
+      addedEPs.forEach(ep => sections.push(`- ➕ \`${ep}\``));
+    }
+    if (removedEPs.length > 0) {
+      sections.push('**Removed:**');
+      removedEPs.forEach(ep => sections.push(`- ➖ \`${ep}\``));
+    }
+    sections.push('');
+  }
+
+  // Compare Layers
+  const currentLayers = new Set(current.dependencyGraph.layers.map(l => l.name));
+  const previousLayers = new Set(previous.dependencyGraph.layers.map(l => l.name));
+
+  const addedLayers = Array.from(currentLayers).filter(l => !previousLayers.has(l));
+  const removedLayers = Array.from(previousLayers).filter(l => !currentLayers.has(l));
+
+  if (addedLayers.length > 0 || removedLayers.length > 0) {
+    sections.push('### 🏗️ Structural Changes');
+    if (addedLayers.length > 0) {
+      sections.push('**New Layers:**');
+      addedLayers.forEach(l => sections.push(`- ✨ \`${l}\``));
+    }
+    if (removedLayers.length > 0) {
+      sections.push('**Removed Layers:**');
+      removedLayers.forEach(l => sections.push(`- 🗑️ \`${l}\``));
+    }
+    sections.push('');
+  }
+
+  if (sections.length === 4) {
+    sections.push('> No major architectural shifts detected since the last analysis.');
+  }
+
+  return sections.join('\n');
 }
 
 /**
@@ -108,7 +186,7 @@ function renderEntryPoints(result: RepoXRayResult): string {
   };
 
   for (const [importance, eps] of Object.entries(grouped)) {
-    if (eps.length === 0) continue;
+    if (eps.length === 0) {continue;}
 
     const emoji = importance === 'critical' ? '🔴' : importance === 'high' ? '🟠' : importance === 'medium' ? '🟡' : '🟢';
     sections.push(`#### ${emoji} ${importance.charAt(0).toUpperCase() + importance.slice(1)} Priority`);
@@ -126,20 +204,21 @@ function renderEntryPoints(result: RepoXRayResult): string {
 }
 
 /**
- * Render architecture section with Mermaid diagram
+ * Render architecture section with diagram
  */
 function renderArchitecture(result: RepoXRayResult): string {
   const { layers, dependencyFlow, keyPatterns } = result.dependencyGraph;
   const { architectureDiagram } = result.artifacts;
+  const diagramFormat = vscode.workspace.getConfiguration('onboard').get<string>('diagramFormat', 'Mermaid').toLowerCase();
 
   const sections: string[] = [
     '## 🏗️ Architecture Overview',
     '',
     '### Architecture Diagram',
     '',
-    '```mermaid',
+    `\`\`\`${diagramFormat}`,
     architectureDiagram,
-    '```',
+    '\`\`\`',
     '',
     '### Dependency Flow',
     '',
@@ -276,7 +355,7 @@ function renderWeirdParts(result: RepoXRayResult): string {
   };
 
   for (const [severity, wps] of Object.entries(grouped)) {
-    if (wps.length === 0) continue;
+    if (wps.length === 0) {continue;}
 
     const emoji = severity === 'high' ? '🔴' : severity === 'medium' ? '🟡' : '🟢';
     sections.push(`### ${emoji} ${severity.charAt(0).toUpperCase() + severity.slice(1)} Severity`);

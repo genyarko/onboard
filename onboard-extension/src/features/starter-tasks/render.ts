@@ -14,6 +14,9 @@ export function renderTaskCard(task: StarterTask, index: number, total: number):
   // Create a clickable link for VS Code
   // Since cards are in ONBOARD_TASKS/, we need to go up one level then to the file
   parts.push(`**Location:** [${task.file}:${task.line}](../${task.file}#L${task.line})`);
+  if (task.github_issue_url) {
+    parts.push(`**Issue:** [View on GitHub](${task.github_issue_url})`);
+  }
   parts.push('');
   parts.push('## 📝 Description');
   parts.push(task.description);

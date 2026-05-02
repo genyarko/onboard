@@ -1,0 +1,76 @@
+{
+  "entryPoints": {
+    "summary": "The extension is structured around VS Code's contribution points, with specific features isolated in the `features/` directory.",
+    "entryPoints": [
+      {
+        "file": "onboard-extension/src/extension.ts",
+        "role": "Extension Main",
+        "description": "The primary entry point where VS Code activates the extension and registers all commands and providers.",
+        "importance": "critical"
+      },
+      {
+        "file": "onboard-extension/src/bob/client.ts",
+        "role": "API Client",
+        "description": "Centralized client for communicating with the Bob/Watsonx AI services.",
+        "importance": "high"
+      }
+    ]
+  },
+  "dependencyGraph": {
+    "layers": [
+      {
+        "name": "Integration Layer",
+        "description": "VS Code specific code including extension activation and command registration.",
+        "files": ["src/extension.ts"],
+        "dependsOn": ["Feature Layer", "Client Layer"]
+      },
+      {
+        "name": "Feature Layer",
+        "description": "Business logic for specific onboarding tools like Repo X-Ray and Day-N Plan.",
+        "files": ["src/features/"],
+        "dependsOn": ["Client Layer", "Utility Layer"]
+      },
+      {
+        "name": "Client Layer",
+        "description": "Abstraction for AI model communication.",
+        "files": ["src/bob/"],
+        "dependsOn": ["Utility Layer"]
+      }
+    ],
+    "dependencyFlow": "VS Code -> Features -> Bob Client -> External API",
+    "keyPatterns": ["Command Pattern", "Provider Pattern", "Schema-first (Zod) Validation"]
+  },
+  "artifacts": {
+    "architectureDiagram": "graph TD\n  Ext[extension.ts] --> Features\n  Features --> Bob[bob/client.ts]\n  Features --> Utils[utils/]\n  Bob --> API[External AI API]",
+    "criticalPathNarrative": "When a command like 'X-Ray Repository' is triggered, the extension gathers workspace context (file tree, key files), passes it to the Bob Client which constructs a prompt, validates the JSON response using Zod, and finally renders a Markdown report.",
+    "conventions": [
+      {
+        "category": "Validation",
+        "rule": "Use Zod schemas for all AI responses.",
+        "examples": ["src/features/repo-xray/schema.ts"]
+      },
+      {
+        "category": "UI",
+        "rule": "Use withProgress for any operation exceeding 1 second.",
+        "examples": ["src/features/starter-tasks/command.ts"]
+      }
+    ],
+    "technicalStack": ["TypeScript", "VS Code Extension API", "Zod", "Winston", "Dotenv"]
+  },
+  "weirdParts": {
+    "summary": "A few utility scripts and manual implementations deviate from standard practices.",
+    "weirdParts": [
+      {
+        "file": "onboard-extension/update_git.js",
+        "severity": "low",
+        "description": "Utility scripts located in the root of the extension folder rather than a scripts/ directory.",
+        "hypothesis": "Likely temporary or demo-specific automation for repo state management."
+      }
+    ]
+  },
+  "metadata": {
+    "repositoryPath": ".",
+    "analyzedAt": "2026-05-02T10:00:00.000Z",
+    "analysisVersion": "1.0.0"
+  }
+}

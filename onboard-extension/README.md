@@ -31,9 +31,9 @@ Analyzes your entire codebase and generates a comprehensive architecture documen
 3. Walks the dependency graph from each entry point
 4. Detects patterns and conventions
 5. Flags code that doesn't follow the patterns
-6. Generates a single markdown file with all findings
+6. Generates a document with all findings (supports Markdown, HTML, and JSON via settings)
 
-**Output Location:** Opens in VS Code preview as `repo-xray-analysis.md`
+**Output Location:** Opens in VS Code preview or editor as `REPO_XRAY` (format depends on your settings).
 
 **Best For:**
 - First day on a new project
@@ -43,7 +43,7 @@ Analyzes your entire codebase and generates a comprehensive architecture documen
 
 ### 🤔 Why Is This Here?
 
-**Command:** `Onboard: Why Is This Here?` (right-click any line)
+**Command:** `Onboard: Why Is This Here?` (Right-click any line or press `Ctrl+Shift+W` / `Cmd+Shift+W`)
 
 Explains the business reasoning behind code, not just what it does.
 
@@ -80,7 +80,15 @@ auth setup. See issue #4502 for the original bug report.
 - Avoiding repeated mistakes
 - Code review preparation
 
-**Cache:** Results are cached per line to avoid redundant API calls. Clear cache with `Onboard: Clear Why-Is-This-Here Cache`
+**Cache:** Results are cached per line to avoid redundant API calls. Clear the cache via the Status Bar trash icon (`Clear Onboard Cache`) or by running the command `Onboard: Clear Why-Is-This-Here Cache`.
+
+## ⌨️ Keyboard Shortcuts & UX Features
+
+- `Ctrl+Shift+X` (`Cmd+Shift+X` on Mac): Run **Repo X-Ray**
+- `Ctrl+Shift+W` (`Cmd+Shift+W` on Mac): Run **Why Is This Here?**
+- **Status Bar Integration**: Quickly clear the Why-Is-This-Here cache via the Trash Icon located on the right side of your status bar.
+- **Real-Time Progress**: Repo X-Ray provides granular sub-step progress tracking notifications so you can easily see its analysis phase.
+- **Customizable Output**: Choose the output format of Repo X-Ray in VS Code Settings (`onboard.outputFormat`) - defaults to Markdown, but also supports HTML and JSON.
 
 ### 📅 Day-N Plan
 

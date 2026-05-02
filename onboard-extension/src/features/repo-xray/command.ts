@@ -1,3 +1,4 @@
+import { Logger } from '../../utils/logger';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs/promises';
@@ -9,6 +10,7 @@ import {
   buildArtifactsPrompt,
   buildWeirdPartsPrompt,
 } from './prompt';
+import { generateFileTree } from '../../utils/file-tree';
 import {
   EntryPointsResponseSchema,
   DependencyGraphResponseSchema,
@@ -26,7 +28,7 @@ import { renderMarkdown } from './render';
  * Execute the Repo X-Ray command
  * Analyzes the repository and generates comprehensive onboarding documentation
  */
-export async function executeRepoXRay(): Promise<void> {
+export async function executeRepoXRay(context: vscode.ExtensionContext): Promise<void> {
   try {
     // Get workspace root path
     const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -38,31 +40,66 @@ export async function executeRepoXRay(): Promise<void> {
     const workspaceRoot = workspaceFolders[0].uri.fsPath;
     const workspaceName = path.basename(workspaceRoot);
 
+    // Incremental Analysis: Check for changes since last run
+    const lastAnalysisTime = context.workspaceState.get<number>(`onboard.xray.lastTime:${workspaceRoot}`);
+    let hasChanges = true;
+    
+    if (lastAnalysisTime) {
+      try {
+        const { execFileSync } = require('child_process');
+        const diff = execFileSync('git', ['diff', '--name-only', `@{${new Date(lastAnalysisTime).toISOString()}}`], { cwd: workspaceRoot }).toString();
+        hasChanges = diff.trim().length > 0;
+      } catch (e) {
+        // If git fails, assume changes
+      }
+    }
+
+    if (!hasChanges) {
+      const choice = await vscode.window.showInformationMessage(
+        'No changes detected since last analysis. Re-run anyway?',
+        'Yes', 'No'
+      );
+      if (choice !== 'Yes') {return;}
+    }
+
     // Show progress notification
     await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
         title: `Analyzing ${workspaceName}...`,
-        cancellable: false,
+        cancellable: true,
       },
-      async (progress) => {
+      async (progress, token) => {
         try {
-          // Step 1: Gather context
+          // Step 1: Gather context (with caching)
           progress.report({ message: 'Gathering repository context...', increment: 10 });
-          const context = await gatherRepoContext(workspaceRoot);
+          
+          let fileTree = context.workspaceState.get<string>(`onboard.xray.fileTree:${workspaceRoot}`);
+          if (!fileTree || hasChanges) {
+            fileTree = await generateFileTree(workspaceRoot);
+            context.workspaceState.update(`onboard.xray.fileTree:${workspaceRoot}`, fileTree);
+          }
+
+          const repoContext = await gatherRepoContext(workspaceRoot, fileTree);
+          if (token.isCancellationRequested) {return;}
 
           // Step 2: Execute prompts sequentially
-          progress.report({ message: 'Identifying entry points...', increment: 20 });
-          const entryPoints = await executePrompt1(context);
+          progress.report({ message: 'Identifying entry points...', increment: 10 });
+          const entryPoints = await executePrompt1(context, token, progress);
+          if (token.isCancellationRequested) {return;}
 
-          progress.report({ message: 'Analyzing dependency graph...', increment: 40 });
-          const dependencyGraph = await executePrompt2(context, entryPoints);
+          progress.report({ message: 'Analyzing dependency graph...', increment: 20 });
+          const dependencyGraph = await executePrompt2(context, entryPoints, token, progress);
+          if (token.isCancellationRequested) {return;}
 
-          progress.report({ message: 'Generating artifacts...', increment: 60 });
-          const artifacts = await executePrompt3(context, entryPoints, dependencyGraph);
+          progress.report({ message: 'Generating artifacts...', increment: 20 });
+          const diagramFormat = vscode.workspace.getConfiguration('onboard').get<string>('diagramFormat', 'Mermaid');
+          const artifacts = await executePrompt3(context, entryPoints, dependencyGraph, diagramFormat, token, progress);
+          if (token.isCancellationRequested) {return;}
 
-          progress.report({ message: 'Identifying weird parts...', increment: 80 });
-          const weirdParts = await executePrompt4(context, entryPoints, dependencyGraph, artifacts);
+          progress.report({ message: 'Identifying weird parts...', increment: 20 });
+          const weirdParts = await executePrompt4(context, entryPoints, dependencyGraph, artifacts, token, progress);
+          if (token.isCancellationRequested) {return;}
 
           // Step 3: Combine results
           const result: RepoXRayResult = {
@@ -77,14 +114,45 @@ export async function executeRepoXRay(): Promise<void> {
             },
           };
 
-          // Step 4: Render markdown
-          progress.report({ message: 'Generating markdown document...', increment: 90 });
-          const outputPath = await renderMarkdown(result, workspaceRoot);
+          // Save analysis time
+          context.workspaceState.update(`onboard.xray.lastTime:${workspaceRoot}`, Date.now());
+
+          // Always save JSON for future comparisons
+          const jsonPath = path.join(workspaceRoot, 'REPO_XRAY.json');
+          let previousResult: RepoXRayResult | undefined;
+          try {
+            const oldData = await fs.readFile(jsonPath, 'utf-8');
+            previousResult = JSON.parse(oldData);
+          } catch (e) {}
+          
+          await fs.writeFile(jsonPath, JSON.stringify(result, null, 2), 'utf-8');
+
+          // Step 4: Render markdown or other format
+          progress.report({ message: 'Generating document...', increment: 10 });
+          const format = vscode.workspace.getConfiguration('onboard').get<string>('outputFormat', 'Markdown');
+          
+          let outputPath: string;
+          if (format === 'JSON') {
+            outputPath = jsonPath;
+          } else if (format === 'HTML') {
+            const mdPath = await renderMarkdown(result, workspaceRoot, previousResult);
+            const mdContent = await fs.readFile(mdPath, 'utf-8');
+            outputPath = path.join(workspaceRoot, 'REPO_XRAY.html');
+            await fs.writeFile(outputPath, `<html><body><pre>${mdContent}</pre></body></html>`, 'utf-8');
+            await fs.unlink(mdPath); // cleanup md
+          } else {
+            outputPath = await renderMarkdown(result, workspaceRoot, previousResult);
+          }
 
           // Step 5: Open in preview
-          progress.report({ message: 'Opening preview...', increment: 100 });
+          progress.report({ message: 'Opening preview...', increment: 10 });
           const doc = await vscode.workspace.openTextDocument(outputPath);
-          await vscode.commands.executeCommand('markdown.showPreview', doc.uri);
+          
+          if (format === 'Markdown') {
+            await vscode.commands.executeCommand('markdown.showPreview', doc.uri);
+          } else {
+            await vscode.window.showTextDocument(doc);
+          }
 
           vscode.window.showInformationMessage(
             `✅ Repo X-Ray complete! Document saved to ${path.basename(outputPath)}`
@@ -97,17 +165,17 @@ export async function executeRepoXRay(): Promise<void> {
       }
     );
   } catch (error) {
-    console.error('Repo X-Ray error:', error);
+    Logger.error('Repo X-Ray error:', error);
   }
 }
 
 /**
  * Gather repository context by reading file tree and key files
  */
-async function gatherRepoContext(workspaceRoot: string) {
+async function gatherRepoContext(workspaceRoot: string, cachedFileTree?: string) {
   try {
-    // Generate file tree
-    const fileTree = await generateFileTree(workspaceRoot);
+    // Use cached file tree if available
+    const fileTree = cachedFileTree || await generateFileTree(workspaceRoot);
 
     // Read key files
     const additionalFiles: Record<string, string> = {};
@@ -135,69 +203,18 @@ async function gatherRepoContext(workspaceRoot: string) {
 }
 
 /**
- * Generate a file tree representation of the repository
- */
-async function generateFileTree(rootPath: string, maxDepth: number = 4): Promise<string> {
-  const lines: string[] = [];
-  const ignoreDirs = new Set([
-    'node_modules',
-    '.git',
-    'dist',
-    'build',
-    'out',
-    '.vscode',
-    '__pycache__',
-    '.pytest_cache',
-    'venv',
-    '.env',
-  ]);
-
-  async function traverse(dirPath: string, prefix: string = '', depth: number = 0) {
-    if (depth > maxDepth) {
-      return;
-    }
-
-    try {
-      const entries = await fs.readdir(dirPath, { withFileTypes: true });
-      const filtered = entries.filter(
-        (entry) => !entry.name.startsWith('.') || entry.name === '.env.example'
-      );
-
-      for (let i = 0; i < filtered.length; i++) {
-        const entry = filtered[i];
-        const isLast = i === filtered.length - 1;
-        const connector = isLast ? '└── ' : '├── ';
-        const extension = isLast ? '    ' : '│   ';
-
-        if (entry.isDirectory()) {
-          if (ignoreDirs.has(entry.name)) {
-            lines.push(`${prefix}${connector}${entry.name}/ (ignored)`);
-            continue;
-          }
-          lines.push(`${prefix}${connector}${entry.name}/`);
-          await traverse(path.join(dirPath, entry.name), prefix + extension, depth + 1);
-        } else {
-          lines.push(`${prefix}${connector}${entry.name}`);
-        }
-      }
-    } catch (error) {
-      // Skip directories we can't read
-    }
-  }
-
-  const rootName = path.basename(rootPath);
-  lines.push(`${rootName}/`);
-  await traverse(rootPath);
-
-  return lines.join('\n');
-}
-
-/**
  * Execute Prompt 1: Identify Entry Points
  */
-async function executePrompt1(context: any): Promise<EntryPointsResponse> {
+async function executePrompt1(context: any, token: vscode.CancellationToken, progress: vscode.Progress<{ message?: string; increment?: number }>): Promise<EntryPointsResponse> {
   const prompt = buildEntryPointsPrompt(context);
-  const response = await ask(prompt);
+  let chunkCount = 0;
+  const response = await ask(prompt, { 
+    token, 
+    onChunk: () => {
+      chunkCount++;
+      if (chunkCount % 5 === 0) {progress.report({ message: `Identifying entry points (receiving data...)` });}
+    }
+  });
 
   if (!response.success || !response.data) {
     throw new Error(`Prompt 1 failed: ${response.error || 'No data returned'}`);
@@ -215,10 +232,19 @@ async function executePrompt1(context: any): Promise<EntryPointsResponse> {
  */
 async function executePrompt2(
   context: any,
-  entryPoints: EntryPointsResponse
+  entryPoints: EntryPointsResponse,
+  token: vscode.CancellationToken,
+  progress: vscode.Progress<{ message?: string; increment?: number }>
 ): Promise<DependencyGraphResponse> {
   const prompt = buildDependencyGraphPrompt(context, entryPoints);
-  const response = await ask(prompt);
+  let chunkCount = 0;
+  const response = await ask(prompt, { 
+    token, 
+    onChunk: () => {
+      chunkCount++;
+      if (chunkCount % 5 === 0) {progress.report({ message: `Analyzing dependency graph (receiving data...)` });}
+    }
+  });
 
   if (!response.success || !response.data) {
     throw new Error(`Prompt 2 failed: ${response.error || 'No data returned'}`);
@@ -237,10 +263,20 @@ async function executePrompt2(
 async function executePrompt3(
   context: any,
   entryPoints: EntryPointsResponse,
-  dependencyGraph: DependencyGraphResponse
+  dependencyGraph: DependencyGraphResponse,
+  diagramFormat: string | undefined,
+  token: vscode.CancellationToken,
+  progress: vscode.Progress<{ message?: string; increment?: number }>
 ): Promise<ArtifactsResponse> {
-  const prompt = buildArtifactsPrompt(context, entryPoints, dependencyGraph);
-  const response = await ask(prompt);
+  const prompt = buildArtifactsPrompt(context, entryPoints, dependencyGraph, diagramFormat);
+  let chunkCount = 0;
+  const response = await ask(prompt, { 
+    token, 
+    onChunk: () => {
+      chunkCount++;
+      if (chunkCount % 5 === 0) {progress.report({ message: `Generating artifacts (receiving data...)` });}
+    }
+  });
 
   if (!response.success || !response.data) {
     throw new Error(`Prompt 3 failed: ${response.error || 'No data returned'}`);
@@ -260,10 +296,19 @@ async function executePrompt4(
   context: any,
   entryPoints: EntryPointsResponse,
   dependencyGraph: DependencyGraphResponse,
-  artifacts: ArtifactsResponse
+  artifacts: ArtifactsResponse,
+  token: vscode.CancellationToken,
+  progress: vscode.Progress<{ message?: string; increment?: number }>
 ): Promise<WeirdPartsResponse> {
   const prompt = buildWeirdPartsPrompt(context, entryPoints, dependencyGraph, artifacts);
-  const response = await ask(prompt);
+  let chunkCount = 0;
+  const response = await ask(prompt, { 
+    token, 
+    onChunk: () => {
+      chunkCount++;
+      if (chunkCount % 5 === 0) {progress.report({ message: `Identifying weird parts (receiving data...)` });}
+    }
+  });
 
   if (!response.success || !response.data) {
     throw new Error(`Prompt 4 failed: ${response.error || 'No data returned'}`);

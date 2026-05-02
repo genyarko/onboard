@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs';
+import { Logger } from '../../utils/logger';
 import { OnboardingPlan, DayPlan, ReadingItem, Task } from './schema';
 
 /**
@@ -22,6 +24,11 @@ class DayNPlanTreeItem extends vscode.TreeItem {
     this.contextValue = itemType;
     this.setIcon();
     this.setTooltip();
+    
+    // Add checkbox for reading and task
+    if (itemType === 'reading' || itemType === 'task') {
+      this.checkboxState = data?.completed ? vscode.TreeItemCheckboxState.Checked : vscode.TreeItemCheckboxState.Unchecked;
+    }
   }
 
   private setIcon(): void {
@@ -33,10 +40,10 @@ class DayNPlanTreeItem extends vscode.TreeItem {
         this.iconPath = new vscode.ThemeIcon('lightbulb');
         break;
       case 'reading':
-        this.iconPath = new vscode.ThemeIcon('book');
+        this.iconPath = new vscode.ThemeIcon(this.data?.completed ? 'pass-filled' : 'book');
         break;
       case 'task':
-        this.iconPath = new vscode.ThemeIcon('checklist');
+        this.iconPath = new vscode.ThemeIcon(this.data?.completed ? 'pass-filled' : 'checklist');
         break;
       case 'readingSection':
         this.iconPath = new vscode.ThemeIcon('library');
@@ -87,20 +94,66 @@ export class DayNPlanProvider implements vscode.TreeDataProvider<DayNPlanTreeIte
   private plan: OnboardingPlan | null = null;
   private workspaceRoot: string = '';
   private context: vscode.ExtensionContext;
-  private static readonly STATE_KEY = 'onboard.dayNPlan.data';
+  private planFilePath: string = '';
 
   constructor(context: vscode.ExtensionContext) {
     this.context = context;
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (workspaceFolders && workspaceFolders.length > 0) {
       this.workspaceRoot = workspaceFolders[0].uri.fsPath;
+      this.planFilePath = path.join(this.workspaceRoot, '.onboard', 'plan.json');
     }
     
-    // Attempt to restore plan from state
-    const savedPlan = this.context.workspaceState.get<OnboardingPlan>(DayNPlanProvider.STATE_KEY);
+    // Attempt to restore plan from workspace file or state
+    this.loadPlan();
+  }
+
+  private loadPlan() {
+    if (this.planFilePath && fs.existsSync(this.planFilePath)) {
+      try {
+        const data = fs.readFileSync(this.planFilePath, 'utf8');
+        this.plan = JSON.parse(data);
+        return;
+      } catch (error) {
+        Logger.error('Failed to load plan from workspace', error);
+      }
+    }
+    const savedPlan = this.context.workspaceState.get<OnboardingPlan>('onboard.dayNPlan.data');
     if (savedPlan) {
       this.plan = savedPlan;
+      this.savePlanFile();
     }
+  }
+
+  private savePlanFile() {
+    if (this.planFilePath && this.plan) {
+      try {
+        const dir = path.dirname(this.planFilePath);
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+        // Generate IDs if missing
+        this.plan.days.forEach(day => {
+          day.readingList?.forEach(r => { if (!r.id) {r.id = Math.random().toString(36).substring(7);} });
+          if (day.task && !day.task.id) {day.task.id = Math.random().toString(36).substring(7);}
+        });
+        fs.writeFileSync(this.planFilePath, JSON.stringify(this.plan, null, 2));
+      } catch (error) {
+        Logger.error('Failed to save plan to workspace', error);
+      }
+    }
+    this.context.workspaceState.update('onboard.dayNPlan.data', this.plan);
+  }
+
+  public toggleItemCompletion(item: DayNPlanTreeItem) {
+    if (!this.plan) {return;}
+    if (item.itemType === 'reading') {
+      item.data.completed = !item.data.completed;
+    } else if (item.itemType === 'task') {
+      item.data.completed = !item.data.completed;
+    }
+    this.savePlanFile();
+    this.refresh();
   }
 
   /**
@@ -108,7 +161,7 @@ export class DayNPlanProvider implements vscode.TreeDataProvider<DayNPlanTreeIte
    */
   public updatePlan(plan: OnboardingPlan): void {
     this.plan = plan;
-    this.context.workspaceState.update(DayNPlanProvider.STATE_KEY, plan);
+    this.savePlanFile();
     this.refresh();
   }
 
@@ -117,8 +170,19 @@ export class DayNPlanProvider implements vscode.TreeDataProvider<DayNPlanTreeIte
    */
   public clearPlan(): void {
     this.plan = null;
-    this.context.workspaceState.update(DayNPlanProvider.STATE_KEY, undefined);
+    this.context.workspaceState.update('onboard.dayNPlan.data', undefined);
+    if (this.planFilePath && fs.existsSync(this.planFilePath)) {
+      try {
+        fs.unlinkSync(this.planFilePath);
+      } catch (e) {
+        Logger.error('Failed to delete plan file', e);
+      }
+    }
     this.refresh();
+  }
+
+  public getPlan(): OnboardingPlan | null {
+    return this.plan;
   }
 
   /**

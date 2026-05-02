@@ -9,7 +9,14 @@ export interface SearchHit {
   filePath: string;
   lineNumber: number;
   content: string;
-  surroundingCode?: string;
+  surroundingCode: string;
+}
+
+export interface GitHubIssue {
+  number: number;
+  title: string;
+  body: string;
+  url: string;
 }
 
 export interface StarterTasksContext {
@@ -17,7 +24,8 @@ export interface StarterTasksContext {
   repositoryPath: string;
   fileTree: string;
   searchHits: SearchHit[];
-  techStack?: string[];
+  techStack: string[];
+  githubIssues?: GitHubIssue[];
 }
 
 /**
@@ -36,12 +44,22 @@ ${hit.surroundingCode ? `Context:\n\`\`\`\n${hit.surroundingCode}\n\`\`\`` : ''}
 </found_comments>
 ` : '<found_comments>No TODO or FIXME comments were found in the recent scan.</found_comments>';
 
+  const issuesSection = context.githubIssues && context.githubIssues.length > 0 ? `
+<open_github_issues>
+${context.githubIssues.map(issue => `
+Issue #${issue.number}: ${issue.title}
+URL: ${issue.url}
+Body: ${issue.body.substring(0, 300)}...
+`).join('\n')}
+</open_github_issues>
+` : '';
+
   return `<role>
 You are a senior technical mentor helping a new developer find their first contribution to the ${repositoryName} project.
 </role>
 
 <task>
-Analyze the provided TODO/FIXME comments and the repository structure to identify the top 3 best "starter tasks" for a newcomer.
+Analyze the provided TODO/FIXME comments, open GitHub issues, and the repository structure to identify the top 3 best "starter tasks" for a newcomer.
 
 A good starter task is:
 1. **Low stakes**: Doesn't involve critical business logic or breaking changes.
@@ -59,6 +77,7 @@ ${fileTree}
 </repository_context>
 
 ${searchHitsSection}
+${issuesSection}
 
 <guidelines>
 1. **Filter and Prioritize**: Review the found comments. Some might be too complex or outdated. Select the 3 most suitable ones.

@@ -17,7 +17,6 @@ suite('Starter Tasks Test Suite', () => {
                 `// TODO: Add error handling here
 export function main() {
     // FIXME: This needs optimization
-    console.log("Hello");
 }`
             );
             
@@ -84,7 +83,7 @@ export function main() {
         const hits: any[] = [];
         
         for (let i = 0; i < 100; i++) {
-            if (hits.length >= maxHits) break;
+            if (hits.length >= maxHits) {break;}
             hits.push({ filePath: `file${i}.ts`, lineNumber: i });
         }
         
@@ -110,9 +109,9 @@ export function main() {
         const mockFiles = ['package.json', 'requirements.txt', 'go.mod'];
         const stack: string[] = [];
         
-        if (mockFiles.includes('package.json')) stack.push('TypeScript/JavaScript (Node.js)');
-        if (mockFiles.includes('requirements.txt')) stack.push('Python');
-        if (mockFiles.includes('go.mod')) stack.push('Go');
+        if (mockFiles.includes('package.json')) {stack.push('TypeScript/JavaScript (Node.js)');}
+        if (mockFiles.includes('requirements.txt')) {stack.push('Python');}
+        if (mockFiles.includes('go.mod')) {stack.push('Go');}
         
         assert.strictEqual(stack.length, 3);
         assert.ok(stack.includes('TypeScript/JavaScript (Node.js)'));

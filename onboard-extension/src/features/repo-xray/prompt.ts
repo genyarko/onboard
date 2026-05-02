@@ -134,7 +134,8 @@ IMPORTANT: Your response must start with { and end with }. No other text before 
 export function buildArtifactsPrompt(
   context: RepoContext,
   entryPoints: EntryPointsResponse,
-  dependencyGraph: DependencyGraphResponse
+  dependencyGraph: DependencyGraphResponse,
+  diagramFormat: string = 'Mermaid'
 ): string {
   const layersList = dependencyGraph.layers
     .map(layer => `- ${layer.name}: ${layer.description}`)
@@ -146,7 +147,7 @@ You are a senior software architect creating comprehensive documentation for a c
 
 <task>
 Create three key artifacts to help engineers understand this codebase:
-1. An architecture diagram in Mermaid syntax
+1. An architecture diagram in ${diagramFormat} syntax
 2. A critical-path narrative explaining how a typical request flows through the system
 3. A conventions cheat sheet documenting coding standards and patterns
 
@@ -166,7 +167,7 @@ Entry Points Summary:
 ${entryPoints.summary}
 
 Your task:
-1. Create a Mermaid diagram showing the architecture (use flowchart or graph syntax)
+1. Create a ${diagramFormat} diagram showing the architecture (use flowchart or graph syntax)
    - Show layers and their relationships
    - Include key components within each layer
    - Use arrows to show dependency direction
@@ -189,7 +190,7 @@ Focus on making this immediately useful for a new engineer joining the project.
 CRITICAL: Return ONLY a valid JSON object. Do not include any markdown formatting, code blocks, or explanatory text.
 Return ONLY this JSON structure:
 {
-  "architectureDiagram": "graph TD\\n    A[Entry] --> B[Routes]\\n    B --> C[Services]\\n    ...",
+  "architectureDiagram": "${diagramFormat} code block representing the system architecture (do NOT include \`\`\` wrappers)",
   "criticalPathNarrative": "## Critical Path\\n\\nWhen a request arrives...\\n\\n### Step 1: Routing\\n...",
   "conventions": [
     {

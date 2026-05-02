@@ -1,9 +1,11 @@
+import { Logger } from '../../utils/logger';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import { ask, validateResponse } from '../../bob/client';
 import { getPlanConfiguration } from './config';
 import { buildDayNPlanPrompt, buildDayNPlanContext } from './prompt';
+import { generateFileTree } from '../../utils/file-tree';
 import { OnboardingPlanSchema, OnboardingPlan } from './schema';
 import { DayNPlanProvider } from './provider';
 
@@ -35,26 +37,38 @@ export async function executeDayNPlan(provider: DayNPlanProvider): Promise<void>
       {
         location: vscode.ProgressLocation.Notification,
         title: `Generating 5-day plan for ${config.role}...`,
-        cancellable: false,
+        cancellable: true,
       },
-      async (progress) => {
+      async (progress, token) => {
         try {
           // Step 2: Gather repository context
           progress.report({ message: 'Analyzing repository structure...', increment: 20 });
           const fileTree = await generateFileTree(workspaceRoot);
+          if (token.isCancellationRequested) {return;}
 
           // Step 3: Check for existing Repo X-Ray data
           progress.report({ message: 'Checking for repository analysis...', increment: 30 });
           const repoXRayData = await loadRepoXRayData(workspaceRoot);
+          if (token.isCancellationRequested) {return;}
 
           // Step 4: Build context and prompt
           progress.report({ message: 'Building onboarding plan...', increment: 40 });
-          const context = buildDayNPlanContext(workspaceRoot, fileTree, config, repoXRayData);
+          
+          let customTemplate: string | undefined;
+          try {
+            const templatePath = path.join(workspaceRoot, '.onboard', 'template.md');
+            customTemplate = await fs.readFile(templatePath, 'utf-8');
+          } catch (e) {
+            // Ignore if template doesn't exist
+          }
+
+          const context = buildDayNPlanContext(workspaceRoot, fileTree, config, repoXRayData, customTemplate);
           const prompt = buildDayNPlanPrompt(context);
+          if (token.isCancellationRequested) {return;}
 
           // Step 5: Call Bob to generate plan
           progress.report({ message: 'Generating personalized plan...', increment: 60 });
-          const response = await ask(prompt);
+          const response = await ask(prompt, { token });
 
           if (!response.success || !response.data) {
             throw new Error(`Failed to generate plan: ${response.error || 'No data returned'}`);
@@ -96,74 +110,76 @@ export async function executeDayNPlan(provider: DayNPlanProvider): Promise<void>
       }
     );
   } catch (error) {
-    console.error('Day-N Plan error:', error);
+    Logger.error('Day-N Plan error:', error);
   }
 }
 
-/**
- * Generate a file tree representation of the repository
- */
-async function generateFileTree(rootPath: string, maxDepth: number = 4): Promise<string> {
-  const lines: string[] = [];
-  const ignoreDirs = new Set([
-    'node_modules',
-    '.git',
-    'dist',
-    'build',
-    'out',
-    '.vscode',
-    '__pycache__',
-    '.pytest_cache',
-    'venv',
-    '.env',
-    'coverage',
-    '.next',
-    '.nuxt',
-  ]);
 
-  async function traverse(dirPath: string, prefix: string = '', depth: number = 0) {
-    if (depth > maxDepth) {
-      return;
-    }
-
-    try {
-      const entries = await fs.readdir(dirPath, { withFileTypes: true });
-      const filtered = entries.filter(
-        (entry) => !entry.name.startsWith('.') || entry.name === '.env.example'
-      );
-
-      for (let i = 0; i < filtered.length; i++) {
-        const entry = filtered[i];
-        const isLast = i === filtered.length - 1;
-        const connector = isLast ? '└── ' : '├── ';
-        const extension = isLast ? '    ' : '│   ';
-
-        if (entry.isDirectory()) {
-          if (ignoreDirs.has(entry.name)) {
-            lines.push(`${prefix}${connector}${entry.name}/ (ignored)`);
-            continue;
-          }
-          lines.push(`${prefix}${connector}${entry.name}/`);
-          await traverse(path.join(dirPath, entry.name), prefix + extension, depth + 1);
-        } else {
-          lines.push(`${prefix}${connector}${entry.name}`);
-        }
-      }
-    } catch (error) {
-      // Skip directories we can't read
-    }
+export async function exportDayNPlanIcs(provider: DayNPlanProvider): Promise<void> {
+  const plan = provider.getPlan();
+  if (!plan) {
+    vscode.window.showErrorMessage('No Day-N Plan to export. Generate a plan first.');
+    return;
   }
 
-  const rootName = path.basename(rootPath);
-  lines.push(`${rootName}/`);
-  await traverse(rootPath);
+  const workspaceFolders = vscode.workspace.workspaceFolders;
+  if (!workspaceFolders) {return;}
+  const workspaceRoot = workspaceFolders[0].uri.fsPath;
 
-  return lines.join('\n');
+  const icsLines = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Onboard Extension//Day-N Plan//EN'
+  ];
+
+  const now = new Date();
+  // Assume starting next Monday
+  let startDate = new Date(now);
+  startDate.setDate(now.getDate() + ((1 + 7 - now.getDay()) % 7 || 7));
+  startDate.setHours(9, 0, 0, 0);
+
+  const formatIcsDate = (date: Date) => {
+    return date.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+  };
+
+  plan.days.forEach((day, index) => {
+    const eventStart = new Date(startDate);
+    eventStart.setDate(startDate.getDate() + index);
+    const eventEnd = new Date(eventStart);
+    eventEnd.setHours(17, 0, 0, 0); // 5 PM
+
+    const uid = `onboard-day-${day.day}-${now.getTime()}@onboard`;
+    const dtstamp = formatIcsDate(now);
+    const dtstart = formatIcsDate(eventStart);
+    const dtend = formatIcsDate(eventEnd);
+
+    const description = `Goal: ${day.goal}\\n\\nTask: ${day.task.title}\\n${day.task.description}\\n\\nReadings:\\n${day.readingList.map(r => '- ' + r.filePath).join('\\n')}`;
+
+    icsLines.push(
+      'BEGIN:VEVENT',
+      `UID:${uid}`,
+      `DTSTAMP:${dtstamp}`,
+      `DTSTART:${dtstart}`,
+      `DTEND:${dtend}`,
+      `SUMMARY:Onboarding Day ${day.day}: ${day.concept}`,
+      `DESCRIPTION:${description.replace(/\n/g, '\\n')}`,
+      'END:VEVENT'
+    );
+  });
+
+  icsLines.push('END:VCALENDAR');
+
+  const filePath = path.join(workspaceRoot, 'ONBOARDING_PLAN.ics');
+  await fs.writeFile(filePath, icsLines.join('\r\n'), 'utf-8');
+  
+  vscode.window.showInformationMessage(`Exported plan to ${filePath}`, 'Open File').then(choice => {
+    if (choice === 'Open File') {
+      vscode.workspace.openTextDocument(filePath).then(doc => {
+        vscode.window.showTextDocument(doc);
+      });
+    }
+  });
 }
-
-/**
- * Load Repo X-Ray data if available
- */
 async function loadRepoXRayData(workspaceRoot: string): Promise<any> {
   try {
     const xrayPath = path.join(workspaceRoot, 'REPO_XRAY.md');
@@ -303,4 +319,4 @@ function generatePlanMarkdown(plan: OnboardingPlan): string {
   lines.push('');
 
   return lines.join('\n');
-}
+}

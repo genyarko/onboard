@@ -1,15 +1,21 @@
+import { Logger } from '../../utils/logger';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import { ask, validateResponse } from '../../bob/client';
 import { buildStarterTasksPrompt, SearchHit, StarterTasksContext } from './prompt';
+import { generateFileTree } from '../../utils/file-tree';
+import { getExcludePatterns } from '../../utils/security';
 import { validateStarterTasks, StarterTasksResponse } from './schema';
 import { renderTaskCard, renderStarterTasksSummary } from './render';
+import { getOpenGitHubIssues } from './git';
+
+import { StarterTasksProvider } from './provider';
 
 /**
  * Execute the Find Starter Tasks command
  */
-export async function executeFindStarterTasks(): Promise<void> {
+export async function executeFindStarterTasks(provider: StarterTasksProvider): Promise<void> {
   const workspaceFolders = vscode.workspace.workspaceFolders;
   if (!workspaceFolders || workspaceFolders.length === 0) {
     vscode.window.showErrorMessage('Please open a folder first.');
@@ -31,17 +37,20 @@ export async function executeFindStarterTasks(): Promise<void> {
         progress.report({ message: 'Scanning codebase for TODOs...', increment: 10 });
         const hits = await scanForTodos(workspaceRoot, token);
         
-        if (token.isCancellationRequested) return;
+        progress.report({ message: 'Fetching GitHub issues...', increment: 10 });
+        const githubIssues = await getOpenGitHubIssues(workspaceRoot);
+        
+        if (token.isCancellationRequested) {return;}
 
-        if (hits.length === 0) {
-          vscode.window.showInformationMessage('No TODO/FIXME comments found in the codebase.');
+        if (hits.length === 0 && githubIssues.length === 0) {
+          vscode.window.showInformationMessage('No TODO/FIXME comments or open GitHub issues found.');
           return;
         }
 
-        progress.report({ message: 'Generating file tree...', increment: 20 });
+        progress.report({ message: 'Generating file tree...', increment: 10 });
         const fileTree = await generateFileTree(workspaceRoot, 3);
         
-        if (token.isCancellationRequested) return;
+        if (token.isCancellationRequested) {return;}
 
         progress.report({ message: 'Analyzing with Bob...', increment: 30 });
         const context: StarterTasksContext = {
@@ -49,20 +58,24 @@ export async function executeFindStarterTasks(): Promise<void> {
           repositoryPath: workspaceRoot,
           fileTree,
           searchHits: hits,
+          githubIssues,
           techStack: await detectTechStack(workspaceRoot),
         };
 
         const prompt = buildStarterTasksPrompt(context);
-        const response = await ask<StarterTasksResponse>(prompt);
+        const response = await ask<StarterTasksResponse>(prompt, { token });
 
         if (!response.success || !response.data) {
           throw new Error(response.error || 'Failed to get response from Bob');
         }
 
-        if (token.isCancellationRequested) return;
+        if (token.isCancellationRequested) {return;}
 
         progress.report({ message: 'Validating tasks...', increment: 10 });
         const validatedResponse = validateResponse(response.data, validateStarterTasks);
+
+        // Update the provider (TreeView)
+        provider.setTasks(validatedResponse.tasks);
 
         progress.report({ message: 'Saving task cards...', increment: 20 });
         
@@ -103,7 +116,17 @@ export async function executeFindStarterTasks(): Promise<void> {
         if (error instanceof Error && error.message === 'Operation cancelled') {
           return;
         }
-        vscode.window.showErrorMessage(`Failed to find starter tasks: ${error instanceof Error ? error.message : String(error)}`);
+        
+        let errorMessage = error instanceof Error ? error.message : String(error);
+        if (errorMessage.includes('ENOENT') || errorMessage.includes('EACCES') || errorMessage.includes('EPERM')) {
+          errorMessage = `File system error: ${errorMessage}. Please check your workspace file permissions and ensure the directory is accessible.`;
+        } else if (errorMessage.includes('Circuit breaker is OPEN')) {
+          errorMessage = `Bob API is temporarily unavailable. Please check your network connection or try again later.`;
+        } else if (errorMessage.includes('BOB_API_KEY') || errorMessage.includes('WATSONX_API_KEY')) {
+          errorMessage = `Authentication failed: ${errorMessage}. Please check your API credentials in settings.`;
+        }
+        
+        vscode.window.showErrorMessage(`Failed to find starter tasks: ${errorMessage}`);
       }
     }
   );
@@ -117,11 +140,11 @@ async function scanForTodos(workspaceRoot: string, token: vscode.CancellationTok
   const todoRegex = /\b(TODO|FIXME)\b(.*)$/gim;
   
   // Exclude common large or irrelevant directories
-  const excludePattern = '{**/node_modules/**,**/dist/**,**/out/**,**/.git/**,**/.bob/**,**/eval/**}';
+  const excludePattern = `{${getExcludePatterns().join(',')}}`;
   const files = await vscode.workspace.findFiles('**/*.{ts,js,py,go,java,c,cpp,h,hpp,rs,md}', excludePattern, 500, token);
 
   for (const fileUri of files) {
-    if (token.isCancellationRequested) break;
+    if (token.isCancellationRequested) {break;}
     
     try {
       const content = await fs.readFile(fileUri.fsPath, 'utf-8');
@@ -142,11 +165,11 @@ async function scanForTodos(workspaceRoot: string, token: vscode.CancellationTok
           });
           
           // Limit to first 50 hits to avoid overwhelming Bob
-          if (hits.length >= 50) return;
+          if (hits.length >= 50) {return;}
         }
       });
       
-      if (hits.length >= 50) break;
+      if (hits.length >= 50) {break;}
     } catch (error) {
       // Skip files we can't read
     }
@@ -156,56 +179,17 @@ async function scanForTodos(workspaceRoot: string, token: vscode.CancellationTok
 }
 
 /**
- * Simplified file tree generator
- */
-async function generateFileTree(rootPath: string, maxDepth: number = 3): Promise<string> {
-  const lines: string[] = [];
-  const ignoreDirs = new Set(['node_modules', '.git', 'dist', 'out', '.vscode', 'eval']);
-
-  async function traverse(dirPath: string, prefix: string = '', depth: number = 0) {
-    if (depth > maxDepth) return;
-
-    try {
-      const entries = await fs.readdir(dirPath, { withFileTypes: true });
-      const filtered = entries.filter(e => !e.name.startsWith('.') || e.name === '.env.example');
-
-      for (let i = 0; i < filtered.length; i++) {
-        const entry = filtered[i];
-        const isLast = i === filtered.length - 1;
-        const connector = isLast ? '└── ' : '├── ';
-        const extension = isLast ? '    ' : '│   ';
-
-        if (entry.isDirectory()) {
-          if (ignoreDirs.has(entry.name)) {
-            lines.push(`${prefix}${connector}${entry.name}/ (ignored)`);
-            continue;
-          }
-          lines.push(`${prefix}${connector}${entry.name}/`);
-          await traverse(path.join(dirPath, entry.name), prefix + extension, depth + 1);
-        } else {
-          lines.push(`${prefix}${connector}${entry.name}`);
-        }
-      }
-    } catch (error) {}
-  }
-
-  lines.push(`${path.basename(rootPath)}/`);
-  await traverse(rootPath);
-  return lines.join('\n');
-}
-
-/**
  * Detects the tech stack based on files in the root
  */
 async function detectTechStack(workspaceRoot: string): Promise<string[]> {
   const stack: string[] = [];
   try {
     const files = await fs.readdir(workspaceRoot);
-    if (files.includes('package.json')) stack.push('TypeScript/JavaScript (Node.js)');
-    if (files.includes('requirements.txt') || files.includes('pyproject.toml')) stack.push('Python');
-    if (files.includes('go.mod')) stack.push('Go');
-    if (files.includes('Cargo.toml')) stack.push('Rust');
-    if (files.includes('pom.xml')) stack.push('Java (Maven)');
+    if (files.includes('package.json')) {stack.push('TypeScript/JavaScript (Node.js)');}
+    if (files.includes('requirements.txt') || files.includes('pyproject.toml')) {stack.push('Python');}
+    if (files.includes('go.mod')) {stack.push('Go');}
+    if (files.includes('Cargo.toml')) {stack.push('Rust');}
+    if (files.includes('pom.xml')) {stack.push('Java (Maven)');}
   } catch (error) {}
   return stack;
 }

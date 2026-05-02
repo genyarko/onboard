@@ -291,10 +291,35 @@ Tests cover:
 
 ## 📝 Documentation
 
+### Getting Started
+- **[Interactive Walkthrough](WALKTHROUGH.md)** - Step-by-step guide for first-time users (15-20 min)
 - **[Extension README](onboard-extension/README.md)** - Detailed extension documentation
-- **[Evaluation Guide](eval/README.md)** - How to run and interpret evaluations
+- **[Quick Start](#-quick-start)** - Installation and setup instructions
+
+### User Guides
+- **[Troubleshooting Guide](TROUBLESHOOTING.md)** - Common issues and solutions with FAQ
+- **[API Documentation](API.md)** - Complete API reference with inline code examples
+- **[Prompt Templates](PROMPTS.md)** - Documentation of all Bob prompt templates
+
+### Architecture & Design
+- **[Architecture Decision Records](docs/adr/README.md)** - Key architectural decisions
+  - [ADR-001: Use Bob for Full Repository Context](docs/adr/001-use-bob-for-full-repo-context.md)
+  - [ADR-002: Four-Stage Repo X-Ray Pipeline](docs/adr/002-four-stage-repo-xray-pipeline.md)
+  - [ADR-003: Structured Outputs with Zod](docs/adr/003-structured-outputs-with-zod.md)
+  - [ADR-004: Native VS Code Integration](docs/adr/004-native-vscode-integration.md)
+  - [ADR-005: Git History for Context](docs/adr/005-git-history-for-context.md)
+  - [ADR-006: Quantitative Evaluation Harness](docs/adr/006-evaluation-harness.md)
+  - [ADR-007: Prompt Isolation](docs/adr/007-prompt-isolation.md)
 - **[Background](background.md)** - Project motivation and design decisions
 - **[Pre-Planning](pre-planning.md)** - Build guidelines for AI agents
+
+### Quality & Testing
+- **[Evaluation Guide](eval/README.md)** - How to run and interpret evaluations
+- **[Ground Truth Data](eval/ground-truth/)** - Test datasets for accuracy measurement
+
+### Contributing
+- **[Contributing Guide](CONTRIBUTING.md)** - How to contribute to the project
+- **[Development Guide](#-development)** - Setting up development environment
 
 ## 🎥 Demo
 

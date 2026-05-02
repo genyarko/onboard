@@ -1,12 +1,15 @@
+import { Logger } from '../../utils/logger';
 import * as vscode from 'vscode';
-import { exec } from 'child_process';
+import { exec, execFile } from 'child_process';
 import { promisify } from 'util';
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export interface GitLog {
   hash: string;
   author: string;
+  email?: string;
   date: Date;
   message: string;
   diff?: string;
@@ -35,7 +38,8 @@ export interface PR {
  */
 export async function getLineHistory(
   file: string,
-  line: number
+  startLine: number,
+  endLine: number = startLine
 ): Promise<GitLog[]> {
   try {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
@@ -47,9 +51,9 @@ export async function getLineHistory(
     const relativePath = vscode.workspace.asRelativePath(file);
     
     // Bounded to last 5 revisions and follows renames; --no-patch keeps output small
-    const command = `git log -L ${line},${line}:"${relativePath}" -n 5 --pretty=format:"%H|%an|%ai|%s" --no-patch`;
+    const args = ['log', `-L ${startLine},${endLine}:${relativePath}`, '-n', '5', '--pretty=format:%H|%an|%ae|%ai|%s', '--no-patch'];
 
-    const { stdout } = await execAsync(command, {
+    const { stdout } = await execFileAsync('git', args, {
       cwd: workspaceFolder.uri.fsPath,
       maxBuffer: 1024 * 1024 * 2,
       timeout: 5000,
@@ -61,13 +65,14 @@ export async function getLineHistory(
 
     const logs: GitLog[] = [];
     for (const row of stdout.trim().split('\n')) {
-      if (!row.trim()) continue;
-      const [hash, author, dateStr, ...messageParts] = row.split('|');
-      if (!hash || !author || !dateStr) continue;
+      if (!row.trim()) {continue;}
+      const [hash, author, email, dateStr, ...messageParts] = row.split('|');
+      if (!hash || !author || !dateStr) {continue;}
 
       logs.push({
         hash: hash.trim(),
         author: author.trim(),
+        email: email?.trim(),
         date: new Date(dateStr.trim()),
         message: messageParts.join('|').trim(),
       });
@@ -75,7 +80,7 @@ export async function getLineHistory(
 
     return logs;
   } catch (error) {
-    console.error('Error getting line history:', error);
+    Logger.error('Error getting line history:', error);
     return [];
   }
 }
@@ -95,17 +100,21 @@ export async function getCommitDetails(hash: string): Promise<CommitDetails | nu
     const END = '<<<ONBOARD_END>>>';
     const format = ['%H', '%an', '%ae', '%ai', '%s', '%b'].join(SEP) + END;
 
-    const { stdout: metaOut } = await execAsync(
-      `git show -s --pretty=format:"${format}" ${hash}`,
-      { cwd: workspaceFolder.uri.fsPath, maxBuffer: 1024 * 1024 * 2, timeout: 5000 }
-    );
+    // Use execFile to avoid shell injection
+    const metaArgs = ['show', '-s', `--pretty=format:${format}`, hash];
+    const { stdout: metaOut } = await execFileAsync('git', metaArgs, {
+      cwd: workspaceFolder.uri.fsPath,
+      maxBuffer: 1024 * 1024 * 2,
+      timeout: 5000,
+    });
 
     const meta = metaOut.split(END)[0] ?? '';
     const [hashOut, author, email, dateStr, subject, body] = meta.split(SEP);
 
     // Files in a separate call — clean and unambiguous.
-    const { stdout: filesOut } = await execAsync(
-      `git show --name-only --pretty=format: ${hash}`,
+    const { stdout: filesOut } = await execFileAsync(
+      'git',
+      ['show', '--name-only', '--pretty=format:', hash],
       { cwd: workspaceFolder.uri.fsPath, maxBuffer: 1024 * 1024 * 2, timeout: 5000 }
     );
     const files = filesOut.split('\n').map(f => f.trim()).filter(Boolean);
@@ -120,7 +129,7 @@ export async function getCommitDetails(hash: string): Promise<CommitDetails | nu
       files,
     };
   } catch (error) {
-    console.error('Error getting commit details:', error);
+    Logger.error('Error getting commit details:', error);
     return null;
   }
 }
@@ -170,8 +179,7 @@ export async function getLinkedPRs(hash: string): Promise<PR[]> {
     try {
       const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
       if (workspaceFolder) {
-        const { stdout: remoteUrl } = await execAsync(
-          'git config --get remote.origin.url',
+        const { stdout: remoteUrl } = await execFileAsync('git', ['config', '--get', 'remote.origin.url'],
           { cwd: workspaceFolder.uri.fsPath }
         );
 
@@ -191,12 +199,12 @@ export async function getLinkedPRs(hash: string): Promise<PR[]> {
       }
     } catch (error) {
       // Silently fail if we can't get remote URL
-      console.debug('Could not get GitHub remote URL:', error);
+      Logger.debug('Could not get GitHub remote URL:', error);
     }
 
     return prs;
   } catch (error) {
-    console.error('Error getting linked PRs:', error);
+    Logger.error('Error getting linked PRs:', error);
     return [];
   }
 }
@@ -211,7 +219,7 @@ export async function isGitRepository(): Promise<boolean> {
       return false;
     }
 
-    await execAsync('git rev-parse --git-dir', {
+    await execFileAsync('git', ['rev-parse', '--git-dir'], {
       cwd: workspaceFolder.uri.fsPath,
     });
     
@@ -231,7 +239,7 @@ export async function getCurrentBranch(): Promise<string | null> {
       return null;
     }
 
-    const { stdout } = await execAsync('git branch --show-current', {
+    const { stdout } = await execFileAsync('git', ['branch', '--show-current'], {
       cwd: workspaceFolder.uri.fsPath,
     });
     

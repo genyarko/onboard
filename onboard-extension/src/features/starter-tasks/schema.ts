@@ -4,6 +4,7 @@ import { z } from 'zod';
  * Zod schema for a single starter task
  */
 export const StarterTaskSchema = z.object({
+  id: z.string().optional().describe('Unique identifier for the task'),
   title: z.string().describe('Short, descriptive title of the task'),
   description: z.string().describe('Detailed explanation of what needs to be done'),
   file: z.string().describe('Relative path to the file containing the task'),
@@ -11,6 +12,8 @@ export const StarterTaskSchema = z.object({
   hints: z.array(z.string()).describe('List of helpful tips or pointers to get started'),
   expected_outcome: z.string().describe('What the code should look like or do after completion'),
   difficulty: z.enum(['easy', 'medium', 'hard']).describe('Estimated difficulty level'),
+  github_issue_url: z.string().optional().describe('Link to the GitHub issue if this task is based on one'),
+  completed: z.boolean().default(false).describe('Whether the task has been completed'),
 });
 
 /**

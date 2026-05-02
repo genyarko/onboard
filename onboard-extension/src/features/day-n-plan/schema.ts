@@ -5,10 +5,12 @@ import { z } from 'zod';
  * Represents a file or documentation that should be read
  */
 export const ReadingItemSchema = z.object({
+  id: z.string().optional().describe('Unique identifier'),
   filePath: z.string().describe('Absolute or relative path to the file to read'),
   description: z.string().describe('Brief description of what to learn from this file'),
   estimatedMinutes: z.number().describe('Estimated time to read and understand (in minutes)'),
   priority: z.enum(['high', 'medium', 'low']).describe('Priority level for this reading'),
+  completed: z.boolean().optional().default(false),
 });
 
 export type ReadingItem = z.infer<typeof ReadingItemSchema>;
@@ -18,12 +20,14 @@ export type ReadingItem = z.infer<typeof ReadingItemSchema>;
  * Represents an actionable task for the new team member
  */
 export const TaskSchema = z.object({
+  id: z.string().optional().describe('Unique identifier'),
   title: z.string().describe('Title of the task'),
   description: z.string().describe('Detailed description of what to do'),
   starterFile: z.string().optional().describe('Optional: Path to a file to start with'),
   starterTask: z.string().optional().describe('Optional: Link or reference to a starter task/issue'),
   estimatedMinutes: z.number().describe('Estimated time to complete (in minutes)'),
   difficulty: z.enum(['beginner', 'intermediate', 'advanced']).describe('Difficulty level'),
+  completed: z.boolean().optional().default(false),
 });
 
 export type Task = z.infer<typeof TaskSchema>;

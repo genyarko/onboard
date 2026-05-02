@@ -36,7 +36,7 @@ suite('Bob Client Test Suite', () => {
             }),
         }) as Response;
 
-        const result = await ask('test prompt');
+        const result = await ask('successful openai prompt');
         assert.strictEqual(result.success, true);
         assert.strictEqual(result.data, 'Test response from Bob');
     });
@@ -78,7 +78,7 @@ suite('Bob Client Test Suite', () => {
             } as Response;
         };
 
-        const result = await ask('test prompt');
+        const result = await ask('successful watsonx prompt');
         assert.strictEqual(result.success, true);
         assert.strictEqual(result.data, 'Test response from Watsonx');
         assert.strictEqual(fetchCallCount, 2); // IAM + Chat API
@@ -96,7 +96,7 @@ suite('Bob Client Test Suite', () => {
             }),
         }) as Response;
 
-        const result = await ask<{ key: string; number: number }>('test prompt');
+        const result = await ask<{ key: string; number: number }>('json prompt');
         assert.strictEqual(result.success, true);
         assert.deepStrictEqual(result.data, { key: 'value', number: 42 });
     });
@@ -113,7 +113,7 @@ suite('Bob Client Test Suite', () => {
             }),
         }) as Response;
 
-        const result = await ask<{ key: string }>('test prompt');
+        const result = await ask<{ key: string }>('markdown json prompt');
         assert.strictEqual(result.success, true);
         assert.deepStrictEqual(result.data, { key: 'value' });
     });
@@ -128,7 +128,7 @@ suite('Bob Client Test Suite', () => {
             text: async () => 'Internal Server Error',
         }) as Response;
 
-        const result = await ask('test prompt');
+        const result = await ask('error prompt');
         assert.strictEqual(result.success, false);
         assert.ok(result.error?.includes('Bob API error'));
     });
@@ -152,7 +152,7 @@ suite('Bob Client Test Suite', () => {
             } as Response;
         };
 
-        const result = await ask('test prompt');
+        const result = await ask('retry prompt');
         assert.strictEqual(result.success, true);
         assert.strictEqual(result.data, 'Success after retry');
         assert.strictEqual(callCount, 2);
@@ -172,10 +172,13 @@ suite('Bob Client Test Suite', () => {
             } as Response;
         };
 
-        const result = await ask('test prompt');
-        assert.strictEqual(result.success, false);
-        assert.ok(result.error?.includes('BOB_API_KEY'));
-        assert.strictEqual(callCount, 1); // Should not retry
+        try {
+            await ask('auth error prompt');
+            assert.fail('Should have thrown an auth error');
+        } catch (error) {
+            assert.ok((error as Error).message.includes('401'));
+            assert.strictEqual(callCount, 1); // Should not retry
+        }
     });
 
     test('validateResponse() should validate correct data', () => {
@@ -225,7 +228,7 @@ suite('Bob Client Test Suite', () => {
             gitHistory: 'commit abc123',
         };
 
-        await ask('test prompt', context);
+        await ask('test prompt', { context });
         assert.deepStrictEqual(capturedBody.context, context);
     });
 });

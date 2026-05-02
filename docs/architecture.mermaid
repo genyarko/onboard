@@ -1,0 +1,59 @@
+graph TD
+    subgraph VSCode ["VS Code Extension Host"]
+        Extension[extension.ts]
+        
+        subgraph Features ["Features"]
+            XRay[Repo X-Ray]
+            Why[Why Is This Here?]
+            Plan[Day-N Plan]
+            Tasks[Starter Tasks]
+        end
+        
+        subgraph Providers ["UI Providers"]
+            PlanTree[Day-N Tree View]
+            TasksTree[Starter Tasks Tree View]
+            Hover[Hover Provider]
+        end
+        
+        subgraph BobClient ["IBM Bob Client"]
+            Client[client.ts]
+            CircuitBreaker[Circuit Breaker]
+            Cache[In-Memory Cache]
+            IAM[IAM Token Manager]
+        end
+        
+        subgraph Utils ["Utilities"]
+            Logger[Logger Winston]
+            Scanner[Secret Scanner]
+            Git[Git Wrapper]
+            FileTree[File Tree Scanner]
+        end
+    end
+
+    subgraph External ["External Services"]
+        BobAPI["IBM Bob API / Watsonx"]
+        IAMService["IBM IAM Service"]
+    end
+
+    %% Interactions
+    Extension --> XRay & Why & Plan & Tasks
+    
+    XRay --> Client
+    Why --> Client
+    Plan --> Client
+    Tasks --> Client
+    
+    Plan --> PlanTree
+    Tasks --> TasksTree
+    Why --> Hover
+    
+    Client --> CircuitBreaker
+    Client --> Cache
+    Client --> IAM
+    Client --> Scanner
+    Client --> BobAPI
+    
+    IAM --> IAMService
+    
+    XRay & Why & Plan & Tasks -.-> Utils
+    Client -.-> Logger

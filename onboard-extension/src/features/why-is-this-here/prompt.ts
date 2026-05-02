@@ -7,7 +7,7 @@ import { GitLog, CommitDetails, PR } from './git';
 
 export interface PromptContext {
   filePath: string;
-  lineNumber: number;
+  lineNumber: number | string;
   lineContent: string;
   history: GitLog[];
   commitDetails?: CommitDetails;
@@ -146,7 +146,7 @@ Please provide a clear, concise explanation that helps a developer understand th
  */
 export function generateFallbackPrompt(
   filePath: string,
-  lineNumber: number,
+  lineNumber: number | string,
   lineContent: string,
   surroundingCode?: string
 ): string {

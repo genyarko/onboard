@@ -15,6 +15,86 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "configuration": {
+      "title": "Onboard",
+      "properties": {
+        "onboard.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API Key for Watsonx or Bob (overrides environment variables)"
+        },
+        "onboard.watsonxProjectId": {
+          "type": "string",
+          "default": "",
+          "description": "Watsonx Project ID (if using Watsonx endpoint, overrides WATSONX_PROJECT_ID env var)"
+        },
+        "onboard.bobApiEndpoint": {
+          "type": "string",
+          "default": "",
+          "description": "Custom Bob API Endpoint (overrides BOB_API_ENDPOINT env var)"
+        },
+        "onboard.cacheEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable caching of API responses"
+        },
+        "onboard.cacheTTL": {
+          "type": "number",
+          "default": 3600,
+          "description": "Cache Time-To-Live in seconds"
+        },
+        "onboard.maxRetries": {
+          "type": "number",
+          "default": 3,
+          "description": "Maximum number of retries for failed API requests"
+        },
+        "onboard.timeout": {
+          "type": "number",
+          "default": 30000,
+          "description": "Timeout for API requests in milliseconds"
+        },
+        "onboard.excludePatterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Glob patterns to exclude from analysis."
+        },
+        "onboard.outputFormat": {
+          "type": "string",
+          "enum": [
+            "Markdown",
+            "HTML",
+            "JSON"
+          ],
+          "default": "Markdown",
+          "description": "Format for Repo X-Ray output"
+        },
+        "onboard.diagramFormat": {
+          "type": "string",
+          "enum": [
+            "Mermaid",
+            "PlantUML",
+            "D2"
+          ],
+          "default": "Mermaid",
+          "description": "Format for the architecture diagram"
+        }
+      }
+    },
+    "keybindings": [
+      {
+        "command": "onboard.whyIsThisHere",
+        "key": "ctrl+shift+w",
+        "mac": "cmd+shift+w"
+      },
+      {
+        "command": "onboard.xrayRepo",
+        "key": "ctrl+shift+x",
+        "mac": "cmd+shift+x"
+      }
+    ],
     "commands": [
       {
         "command": "onboard.xrayRepo",
@@ -34,6 +114,11 @@
         "icon": "$(calendar)"
       },
       {
+        "command": "onboard.exportDayNPlanIcs",
+        "title": "Export to Calendar (ICS)",
+        "icon": "$(export)"
+      },
+      {
         "command": "onboard.refreshDayNPlan",
         "title": "Refresh",
         "icon": "$(refresh)"
@@ -46,6 +131,16 @@
       {
         "command": "onboard.findStarterTasks",
         "title": "Onboard: Find Starter Tasks"
+      },
+      {
+        "command": "onboard.refreshStarterTasks",
+        "title": "Refresh Tasks",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "onboard.clearStarterTasks",
+        "title": "Clear Tasks",
+        "icon": "$(trash)"
       }
     ],
     "views": {
@@ -55,6 +150,12 @@
           "name": "Day-N Plan",
           "icon": "$(calendar)",
           "contextualTitle": "Onboarding Plan"
+        },
+        {
+          "id": "onboard.starterTasks",
+          "name": "Starter Tasks",
+          "icon": "$(rocket)",
+          "contextualTitle": "Recommended Tasks"
         }
       ]
     },
@@ -72,14 +173,29 @@
           "group": "navigation@1"
         },
         {
-          "command": "onboard.refreshDayNPlan",
+          "command": "onboard.exportDayNPlanIcs",
           "when": "view == onboard.dayNPlan",
           "group": "navigation@2"
         },
         {
-          "command": "onboard.clearDayNPlan",
+          "command": "onboard.refreshDayNPlan",
           "when": "view == onboard.dayNPlan",
           "group": "navigation@3"
+        },
+        {
+          "command": "onboard.clearDayNPlan",
+          "when": "view == onboard.dayNPlan",
+          "group": "navigation@4"
+        },
+        {
+          "command": "onboard.refreshStarterTasks",
+          "when": "view == onboard.starterTasks",
+          "group": "navigation@1"
+        },
+        {
+          "command": "onboard.clearStarterTasks",
+          "when": "view == onboard.starterTasks",
+          "group": "navigation@2"
         }
       ]
     }
@@ -98,17 +214,24 @@
     "@types/mocha": "^10.0.10",
     "@types/node": "20.x",
     "@types/vscode": "^1.85.0",
-    "@typescript-eslint/eslint-plugin": "^6.15.0",
-    "@typescript-eslint/parser": "^6.15.0",
+    "@typescript-eslint/eslint-plugin": "^8.59.1",
+    "@typescript-eslint/parser": "^8.59.1",
     "@vscode/test-electron": "^2.5.2",
-    "eslint": "^8.56.0",
+    "eslint": "^8.57.1",
     "glob": "^13.0.6",
     "mocha": "^11.7.5",
     "ts-node": "^10.9.2",
     "typescript": "^5.3.3"
   },
+  "overrides": {
+    "mocha": {
+      "diff": "^8.0.3",
+      "serialize-javascript": "^7.0.5"
+    }
+  },
   "dependencies": {
     "dotenv": "^17.4.2",
+    "winston": "^3.19.0",
     "zod": "^3.22.4"
   }
 }
